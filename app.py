@@ -27,17 +27,19 @@ st.markdown("""
 
     .main > div { padding: 0 0.5rem; }
 
-    /* 🗑 删除按钮：红色小字 */
+    /* ✕ 删除按钮：红色文字，无框，跟旁边对齐 */
     button[kind="tertiary"],
-    button[data-testid="baseButton-tertiary"],
-    button[data-kind="tertiary"] {
+    button[data-testid="baseButton-tertiary"] {
         color: #dc2626 !important;
+        background: none !important;
+        border: none !important;
+        box-shadow: none !important;
         font-size: inherit !important;
-        padding: 0 0 0 2px !important;
+        padding: 2px 0 0 4px !important;
         min-width: auto !important;
         min-height: auto !important;
         height: auto !important;
-        line-height: 1 !important;
+        line-height: inherit !important;
     }
 
     /* 标题区 */
@@ -217,7 +219,7 @@ def render_home():
                 with c2:
                     st.markdown(f'📅 {e["exam_date"]}　👥 {e["student_count"]} 人', unsafe_allow_html=True)
                 with c3:
-                    if st.button("🗑", key=f"del_{e['id']}", help="删除本次考试", type="tertiary"):
+                    if st.button("删除", key=f"del_{e['id']}", help="删除本次考试", type="tertiary"):
                         delete_exam(e['id'])
                         st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
