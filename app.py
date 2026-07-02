@@ -19,6 +19,128 @@ from database import get_conn
 # ── 页面配置 ──
 st.set_page_config(page_title="化学成绩分析", page_icon="📊", layout="wide")
 
+# ── 自定义样式 ──
+st.markdown("""
+<style>
+    /* 整体色调 */
+    .stApp { background: #f5f7fb; }
+
+    .main > div { padding: 0 0.5rem; }
+
+    /* 🗑 删除按钮：红色小字 */
+    button[kind="tertiary"],
+    button[data-testid="baseButton-tertiary"],
+    button[data-kind="tertiary"] {
+        color: #dc2626 !important;
+        font-size: inherit !important;
+        padding: 0 0 0 2px !important;
+        min-width: auto !important;
+        min-height: auto !important;
+        height: auto !important;
+        line-height: 1 !important;
+    }
+
+    /* 标题区 */
+    .app-header {
+        background: linear-gradient(135deg, #1a73e8, #0d47a1);
+        color: white;
+        padding: 1.2rem 2rem;
+        border-radius: 12px;
+        margin-bottom: 1.5rem;
+        display: flex;
+        align-items: center;
+        gap: 0.8rem;
+        box-shadow: 0 2px 12px rgba(26,115,232,0.15);
+    }
+    .app-header h1 { margin: 0; font-size: 1.6rem; color: white; }
+    .app-header span { font-size: 1.8rem; opacity: 0.9; }
+
+    /* 卡片 */
+    .card {
+        background: white;
+        border-radius: 10px;
+        padding: 1rem 1.2rem;
+        margin-bottom: 0.8rem;
+        box-shadow: 0 1px 6px rgba(0,0,0,0.06);
+        border: 1px solid #eef0f4;
+    }
+    .card-warn {
+        background: #fff8f0;
+        border-left: 4px solid #f59e0b;
+    }
+    .card-good {
+        background: #f0fdf4;
+        border-left: 4px solid #22c55e;
+    }
+
+    /* 考试条目 */
+    .exam-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.6rem 0;
+        border-bottom: 1px solid #f0f0f0;
+    }
+    .exam-item:last-child { border-bottom: none; }
+
+    /* Metric 数字 */
+    .metric-box {
+        text-align: center;
+        padding: 0.8rem;
+        background: #f8faff;
+        border-radius: 8px;
+        border: 1px solid #e8edf5;
+    }
+    .metric-box .num { font-size: 1.8rem; font-weight: 700; }
+    .metric-box .label { font-size: 0.75rem; color: #6b7280; margin-top: 0.2rem; }
+    .metric-box.green .num { color: #16a34a; }
+    .metric-box.red .num { color: #dc2626; }
+    .metric-box.orange .num { color: #f59e0b; }
+    .metric-box.blue .num { color: #2563eb; }
+
+    /* 退步学生条目 */
+    .decline-row {
+        display: flex;
+        align-items: center;
+        gap: 0.8rem;
+        padding: 0.4rem 0;
+    }
+    .decline-row .name { font-weight: 600; min-width: 5rem; }
+    .decline-row .arrow { color: #dc2626; font-weight: 700; min-width: 3rem; }
+    .decline-row .rank { color: #6b7280; font-size: 0.85rem; }
+
+    /* 侧边栏 */
+    .css-1d391kg, .css-163ttbj { background: #ffffff; }
+    .sidebar-info {
+        background: #f0f7ff;
+        border-radius: 8px;
+        padding: 0.8rem;
+        margin-top: 0.5rem;
+        text-align: center;
+    }
+
+    /* 分割线美化 */
+    hr { margin: 1.2rem 0; border-color: #eef0f4; }
+
+    /* 学生详情头部 */
+    .student-header {
+        background: linear-gradient(135deg, #1e40af, #3b82f6);
+        color: white;
+        padding: 1.5rem 2rem;
+        border-radius: 12px;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 2px 12px rgba(59,130,246,0.2);
+    }
+    .student-header h2 { margin: 0; color: white; font-size: 1.5rem; }
+    .student-header .sub { opacity: 0.8; font-size: 0.9rem; margin-top: 0.3rem; }
+
+    /* 数据表格 */
+    .dataframe { font-size: 0.85rem; }
+
+</style>
+""", unsafe_allow_html=True)
+
+
 # ── 初始化 ──
 init_db()
 if 'page' not in st.session_state:
@@ -61,60 +183,60 @@ if st.session_state.page == 'student' and st.session_state.selected_student:
 # 页面：首页
 # ════════════════════════════════════════════════
 def render_home():
-    st.title("📊 化学成绩分析")
+    st.markdown('<div class="app-header"><span>📊</span><h1>化学成绩分析</h1></div>', unsafe_allow_html=True)
 
     # 导入成功提示
     if st.session_state.import_success:
         st.success(st.session_state.import_success)
         st.session_state.import_success = None
 
-    col1, col2 = st.columns([3, 1])
+    col1, col2 = st.columns([7, 3])
     with col1:
         exams = get_exams()
         if exams:
-            st.markdown(f"**📋 已有考试数据（共 {len(exams)} 次）**")
+            st.markdown(f'<div class="card"><b>📋 考试记录</b>（共 {len(exams)} 次）', unsafe_allow_html=True)
             for e in exams:
-                cols = st.columns([4, 1, 1, 0.5])
-                with cols[0]:
-                    st.write(f"📄 **{e['name']}**")
-                with cols[1]:
-                    st.write(f"📅 {e['exam_date']}")
-                with cols[2]:
-                    st.write(f"👥 {e['student_count']} 人")
-                with cols[3]:
-                    if st.button("🗑", key=f"del_{e['id']}", help="删除本次考试"):
+                c1, c2, c3 = st.columns([5, 4, 1])
+                with c1:
+                    st.markdown(f'<b>{e["name"]}</b>', unsafe_allow_html=True)
+                with c2:
+                    st.markdown(f'📅 {e["exam_date"]}　👥 {e["student_count"]} 人', unsafe_allow_html=True)
+                with c3:
+                    if st.button("🗑", key=f"del_{e['id']}", help="删除本次考试", type="tertiary"):
                         delete_exam(e['id'])
                         st.rerun()
-                st.divider()
+            st.markdown('</div>', unsafe_allow_html=True)
         else:
-            st.info("还没有考试数据，点击左侧「导入新成绩」开始吧！")
+            st.markdown('<div class="card">📭 还没有考试数据，点击左侧「导入新成绩」开始吧！</div>', unsafe_allow_html=True)
 
-    # ⚠️ 最近一次考试各班退步前五名
-    if exams:
-        latest = get_exams()[0]
-        conn = get_conn()
-        decliners = get_top_decliners(latest['id'], conn)
-        conn.close()
-        if decliners:
-            st.markdown("---")
-            st.markdown(f"**⚠「{latest['name']}」各班名次退步最大前五名**")
-            for cls_name in sorted(decliners.keys(), key=lambda x: int(x) if x.isdigit() else x):
-                students = decliners[cls_name]
-                with st.expander(f"🏫 {cls_name}班（{len(students)} 人）", expanded=True):
+        # ⚠️ 退步预警
+        if exams:
+            latest = get_exams()[0]
+            conn = get_conn()
+            decliners = get_top_decliners(latest['id'], conn)
+            conn.close()
+            if decliners:
+                st.markdown(f'<div class="card card-warn"><b>⚠️ 退步预警</b> — 「{latest["name"]}」各班名次退步最大前五名', unsafe_allow_html=True)
+                for cls_name in sorted(decliners.keys(), key=lambda x: int(x) if x.isdigit() else x):
+                    students = decliners[cls_name]
+                    st.markdown(f'<b style="color:#92400e">🏫 {cls_name}班</b>', unsafe_allow_html=True)
                     for s in students:
-                        col_a, col_b, col_c = st.columns([2, 2, 2])
-                        with col_a:
-                            if st.button(f"🔻{s['student_name']}", key=f"d_{s['student_name']}_{latest['id']}", help="点击查看详情"):
-                                st.session_state.selected_student = s['student_name']
-                                st.session_state.page = 'student'
-                                st.rerun()
-                        with col_b:
-                            st.markdown(f"{s['prev_rank']}名 → {s['current_rank']}名")
-                        with col_c:
-                            st.markdown(f"<span style='color:red'>**↓{s['rank_diff']}**</span> 名", unsafe_allow_html=True)
+                        st.markdown(
+                            f'<div class="decline-row">'
+                            f'<span class="name">🔻 {s["student_name"]}</span>'
+                            f'<span class="rank">{s["prev_rank"]}名 → {s["current_rank"]}名</span>'
+                            f'<span class="arrow">↓{s["rank_diff"]}名</span>'
+                            f'</div>',
+                            unsafe_allow_html=True
+                        )
+                        if st.button(f"查看 {s['student_name']}", key=f"d_{s['student_name']}_{latest['id']}", use_container_width=True):
+                            st.session_state.selected_student = s['student_name']
+                            st.session_state.page = 'student'
+                            st.rerun()
+                st.markdown('</div>', unsafe_allow_html=True)
 
     with col2:
-        st.markdown("**🔍 搜索学生**")
+        st.markdown('<div class="card"><b>🔍 搜索学生</b>', unsafe_allow_html=True)
         query = st.text_input("输入学生姓名", label_visibility="collapsed",
                               placeholder="输入姓名搜索...")
         if query:
@@ -129,12 +251,11 @@ def render_home():
                         st.rerun()
             else:
                 st.caption("未找到该学生")
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    # 全部学生快捷入口
-    st.markdown("---")
-    st.markdown("**👥 全部学生**")
+    # 全部学生
+    st.markdown('<div class="card"><b>👥 全部学生</b>', unsafe_allow_html=True)
     all_students = get_all_students()
-    # 分组显示（按班级）
     classes = {}
     for s in all_students:
         cls = s['class_name']
@@ -149,13 +270,14 @@ def render_home():
                     st.session_state.selected_student = name
                     st.session_state.page = 'student'
                     st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ════════════════════════════════════════════════
 # 页面：导入
 # ════════════════════════════════════════════════
 def render_import():
-    st.title("📥 导入新成绩")
+    st.markdown('<div class="app-header"><span>📥</span><h1>导入新成绩</h1></div>', unsafe_allow_html=True)
 
     uploaded_file = st.file_uploader(
         "选择 Excel 文件（支持 .xlsx / .xls）",
@@ -199,9 +321,10 @@ def render_import():
         absent = sum(1 for s in scores if s['is_absent'])
         valid = total - absent
 
-        st.info(f"共识别 **{total}** 名学生，其中缺考 **{absent}** 人，有效成绩 **{valid}** 人")
+        st.success(f"共识别 **{total}** 名学生，其中缺考 **{absent}** 人，有效成绩 **{valid}** 人")
 
         # 显示预览
+        st.markdown('<div class="card"><b>📋 数据预览</b>（前 20 条）', unsafe_allow_html=True)
         preview_df = pd.DataFrame([{
             '姓名': s['student_name'],
             '班级': s['class_name'],
@@ -209,13 +332,11 @@ def render_import():
             '班级排名': s['class_rank'] if s.get('class_rank') else '',
             '年级排名': s['grade_rank'] if s.get('grade_rank') else '',
         } for s in scores[:20]])
-
-        st.markdown(f"**📋 数据预览（前 20 条）**")
         st.dataframe(preview_df, use_container_width=True, hide_index=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
         # 考试信息
-        st.markdown("---")
-        st.markdown("**📋 考试信息**")
+        st.markdown('<div class="card"><b>📋 考试信息</b>', unsafe_allow_html=True)
 
         col1, col2 = st.columns(2)
         with col1:
@@ -247,6 +368,7 @@ def render_import():
             st.session_state.import_success = f"✅ 「{exam_name}」导入成功！共 {valid} 条有效成绩"
             st.session_state.page = 'home'
             st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ════════════════════════════════════════════════
@@ -270,7 +392,13 @@ def render_student():
 
     # 学生基本信息
     class_name = scores[0]['class_name']
-    st.title(f"👤 {name} · {class_name}班")
+    st.markdown(
+        f'<div class="student-header">'
+        f'<h2>👤 {name}</h2>'
+        f'<div class="sub">{class_name}班</div>'
+        f'</div>',
+        unsafe_allow_html=True
+    )
 
     # 返回按钮
     if st.button("← 返回首页"):
@@ -282,8 +410,7 @@ def render_student():
     trend = calc_trend_data(scores)
 
     # ── 总分趋势图 ──
-    st.markdown("---")
-    st.subheader("📈 化学总分趋势")
+    st.markdown('<div class="card"><b>📈 化学总分趋势</b>', unsafe_allow_html=True)
 
     fig_total = go.Figure()
     # 横轴：用考试名+月份-日期，明确转成字符串防 Plotly 误判为日期
@@ -346,12 +473,11 @@ def render_student():
         margin=dict(l=20, r=20, t=20, b=40)
     )
     st.plotly_chart(fig_total, use_container_width=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
     # ── 进退步分析 ──
-    st.markdown("---")
-    st.subheader("📉 进退步分析")
+    st.markdown('<div class="card"><b>📉 进退步分析</b>', unsafe_allow_html=True)
 
-    # 本次成绩（最近一次非缺考）
     current = None
     previous = None
     for s in reversed(scores):
@@ -361,7 +487,6 @@ def render_student():
             elif previous is None:
                 previous = s
             break
-    # 找上次成绩（再往前一次）
     if current:
         for s in reversed(scores):
             if not s['is_absent'] and s['exam_id'] != current['exam_id']:
@@ -380,27 +505,52 @@ def render_student():
             'grade_rank': previous['grade_rank'] if previous else None,
         } if previous else None
 
+        # 用自定义 metric box
         col1, col2, col3 = st.columns(3)
+        cur_score = current['total_score']
+        score_color = 'green' if cur_score >= 80 else 'orange' if cur_score >= 60 else 'red'
+
         with col1:
-            cur_score = current['total_score']
-            st.metric("本次得分", f"{cur_score} 分")
+            st.markdown(
+                f'<div class="metric-box {score_color}">'
+                f'<div class="num">{cur_score}</div>'
+                f'<div class="label">本次得分</div>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
         with col2:
             if p and p['total_score']:
                 diff = round(c['total_score'] - p['total_score'], 1)
-                delta = f"{diff:+.1f}"
-                st.metric("与上次对比", f"{p['total_score']} 分 → {cur_score} 分", delta=delta)
+                dcolor = 'red' if diff < 0 else 'green'
+                st.markdown(
+                    f'<div class="metric-box {dcolor}">'
+                    f'<div class="num">{diff:+.1f}</div>'
+                    f'<div class="label">较上次（{p["total_score"]}分）</div>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
             else:
-                st.metric("与上次对比", "首次考试，无对比")
+                st.markdown('<div class="metric-box blue"><div class="num">—</div><div class="label">首次考试</div></div>', unsafe_allow_html=True)
         with col3:
             if c['class_rank']:
                 if p and p['class_rank']:
-                    rank_diff = p['class_rank'] - c['class_rank']
-                    delta = f"{rank_diff:+d}" if rank_diff != 0 else "持平"
-                    st.metric("班级排名", f"第 {c['class_rank']} 名", delta=delta)
+                    rdiff = p['class_rank'] - c['class_rank']
+                    rcolor = 'red' if rdiff < 0 else 'green'
+                    label = f'较上次（第{p["class_rank"]}名）'
+                    st.markdown(
+                        f'<div class="metric-box {rcolor}">'
+                        f'<div class="num">第{c["class_rank"]}名</div>'
+                        f'<div class="label">{label}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
                 else:
-                    st.metric("班级排名", f"第 {c['class_rank']} 名")
+                    st.markdown(
+                        f'<div class="metric-box blue"><div class="num">第{c["class_rank"]}名</div><div class="label">班级排名</div></div>',
+                        unsafe_allow_html=True
+                    )
             else:
-                st.metric("班级排名", "暂缺")
+                st.markdown('<div class="metric-box blue"><div class="num">—</div><div class="label">班级排名</div></div>', unsafe_allow_html=True)
 
         # 连续退步检测
         consec_decline = 0
@@ -415,20 +565,20 @@ def render_student():
                 break
 
         if consec_decline >= 2:
-            st.warning(f"⚠️ 连续 **{consec_decline}** 次成绩下降！")
+            st.warning(f"连续 {consec_decline} 次成绩下降！")
         elif consec_decline >= 1:
-            st.info(f"📉 最近 1 次成绩下降")
+            st.info(f"最近 1 次成绩下降")
         else:
             if p and p['total_score'] and c['total_score'] >= p['total_score']:
-                st.success("✅ 状态稳定/上升")
+                st.success("状态稳定/上升")
     else:
         st.info("暂无有效成绩数据")
+    st.markdown('</div>', unsafe_allow_html=True)
 
     # ── 客观题 vs 主观题趋势（仅新教育平台数据） ──
     has_obj_subj = any(s['objective_score'] is not None for s in scores)
     if has_obj_subj:
-        st.markdown("---")
-        st.subheader("🎯 选择题 vs 填空题 得分率趋势")
+        st.markdown('<div class="card"><b>🎯 选择题 vs 填空题 得分率趋势</b>', unsafe_allow_html=True)
 
         fig_os = go.Figure()
 
@@ -475,10 +625,10 @@ def render_student():
             margin=dict(l=20, r=20, t=20, b=40)
         )
         st.plotly_chart(fig_os, use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
     # ── 历次成绩明细表 ──
-    st.markdown("---")
-    st.subheader("📋 历次成绩明细")
+    st.markdown('<div class="card"><b>📋 历次成绩明细</b>', unsafe_allow_html=True)
 
     detail_rows = []
     for s in scores:
@@ -504,6 +654,7 @@ def render_student():
             })
 
     st.dataframe(pd.DataFrame(detail_rows), use_container_width=True, hide_index=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ════════════════════════════════════════════════
