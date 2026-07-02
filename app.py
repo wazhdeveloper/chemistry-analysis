@@ -437,7 +437,7 @@ def render_student():
             valid_text.append(f"{s['total_score']}分")
 
     # 绘制折线（只连接有效点）
-    if len(valid_y) >= 2:
+    if len(valid_y) >= 1:
         fig_total.add_trace(go.Scatter(
             x=valid_x, y=valid_y,
             mode='lines+markers+text',
