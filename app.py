@@ -169,6 +169,21 @@ if st.sidebar.button("📥 导入新成绩", use_container_width=True):
 st.sidebar.markdown("---")
 st.sidebar.markdown("💡 点击学生姓名查看趋势")
 st.sidebar.markdown("---")
+st.sidebar.markdown("**👥 全部学生**")
+all_students = get_all_students()
+classes = {}
+for s in all_students:
+    cls = s['class_name']
+    if cls not in classes:
+        classes[cls] = []
+    classes[cls].append(s['student_name'])
+for cls_name in sorted(classes.keys(), key=lambda x: int(x) if x.isdigit() else x):
+    with st.sidebar.expander(f"🏫 {cls_name}班（{len(classes[cls_name])} 人）", expanded=False):
+        for name in sorted(classes[cls_name]):
+            if st.button(f"👤 {name}", key=f"sb_{name}", use_container_width=True):
+                st.session_state.selected_student = name
+                st.session_state.page = 'student'
+                st.rerun()
 
 # 如果正在查看学生页面，侧边栏显示学生信息
 if st.session_state.page == 'student' and st.session_state.selected_student:
@@ -253,24 +268,6 @@ def render_home():
                 st.caption("未找到该学生")
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # 全部学生
-    st.markdown('<div class="card"><b>👥 全部学生</b>', unsafe_allow_html=True)
-    all_students = get_all_students()
-    classes = {}
-    for s in all_students:
-        cls = s['class_name']
-        if cls not in classes:
-            classes[cls] = []
-        classes[cls].append(s['student_name'])
-
-    for cls_name in sorted(classes.keys(), key=lambda x: int(x) if x.isdigit() else x):
-        with st.expander(f"🏫 {cls_name}班（{len(classes[cls_name])} 人）"):
-            for name in sorted(classes[cls_name]):
-                if st.button(f"👤 {name}", key=f"student_{name}", use_container_width=True):
-                    st.session_state.selected_student = name
-                    st.session_state.page = 'student'
-                    st.rerun()
-    st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ════════════════════════════════════════════════
@@ -443,11 +440,13 @@ def render_student():
     if len(valid_y) >= 2:
         fig_total.add_trace(go.Scatter(
             x=valid_x, y=valid_y,
-            mode='lines+markers',
+            mode='lines+markers+text',
             name='总分',
             line=dict(color='#1f77b4', width=2.5),
             marker=dict(size=10, color='#1f77b4'),
             text=valid_text,
+            textposition='top center',
+            textfont=dict(size=11, color='#1f77b4'),
             hovertemplate='%{x}<br>%{text}<extra></extra>'
         ))
 
@@ -575,6 +574,52 @@ def render_student():
         st.info("暂无有效成绩数据")
     st.markdown('</div>', unsafe_allow_html=True)
 
+    # ── 年级排名趋势 ──
+    has_grade_rank = any(s['grade_rank'] is not None for s in scores)
+    if has_grade_rank:
+        st.markdown('<div class="card"><b>🏆 年级排名趋势</b>', unsafe_allow_html=True)
+
+        fig_rank = go.Figure()
+        rank_x = []
+        rank_y = []
+
+        for i, s in enumerate(scores):
+            if s['is_absent'] or s['grade_rank'] is None:
+                continue
+            d = str(s['exam_date'])
+            label = f"{s['exam_name']}（{d[5:10]}）" if len(d) >= 10 else s['exam_name']
+            rank_x.append(label)
+            rank_y.append(s['grade_rank'])
+
+        if rank_y:
+            rank_text = [f'第{r}名' for r in rank_y]
+            fig_rank.add_trace(go.Scatter(
+                x=rank_x, y=rank_y,
+                mode='lines+markers+text',
+                name='年级排名',
+                line=dict(color='#8b5cf6', width=2.5),
+                marker=dict(size=9, color='#8b5cf6'),
+                text=rank_text,
+                textposition='top center',
+                textfont=dict(size=11, color='#8b5cf6'),
+            ))
+            # 排名 Y 轴倒置（排名越小越靠前，应该在图表上方）
+            fig_rank.update_layout(
+                xaxis_title="考试",
+                yaxis_title="年级排名",
+                yaxis=dict(
+                    autorange='reversed',
+                    tickmode='linear',
+                    dtick=max(1, (max(rank_y) - min(rank_y)) // 5) if len(rank_y) > 1 and (max(rank_y) - min(rank_y)) > 5 else 1,
+                ),
+                xaxis=dict(type='category'),
+                height=350,
+                hovermode='x unified',
+                margin=dict(l=20, r=20, t=20, b=40)
+            )
+            st.plotly_chart(fig_rank, use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
     # ── 客观题 vs 主观题趋势（仅新教育平台数据） ──
     has_obj_subj = any(s['objective_score'] is not None for s in scores)
     if has_obj_subj:
@@ -600,20 +645,28 @@ def render_student():
                 subj_y.append(s['subjective_score'])
 
         if obj_y:
+            obj_text = [f'{v}分' for v in obj_y]
             fig_os.add_trace(go.Scatter(
                 x=obj_x, y=obj_y,
-                mode='lines+markers',
+                mode='lines+markers+text',
                 name='选择题',
                 line=dict(color='#2ca02c', width=2),
                 marker=dict(size=8),
+                text=obj_text,
+                textposition='top center',
+                textfont=dict(size=10, color='#2ca02c'),
             ))
         if subj_y:
+            subj_text = [f'{v}分' for v in subj_y]
             fig_os.add_trace(go.Scatter(
                 x=subj_x, y=subj_y,
-                mode='lines+markers',
+                mode='lines+markers+text',
                 name='填空题',
                 line=dict(color='#d62728', width=2),
                 marker=dict(size=8),
+                text=subj_text,
+                textposition='top center',
+                textfont=dict(size=10, color='#d62728'),
             ))
 
         fig_os.update_layout(
