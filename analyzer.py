@@ -282,14 +282,17 @@ def calc_class_stats(scores_list):
 
 def find_consecutive_declines(conn, min_times=2):
     """查找连续退步预警学生（最近 N 次成绩连续下降）
-    返回: list of dict {student_name, class_name, consec_declines, latest_score, prev_score}
+    返回: list of dict {student_name, class_name, consec_declines, latest_score, prev_score, latest_exam_id}
+    已被教师忽略的最新考试的学生会被跳过。
     """
+    from database import get_ignored_decline_pairs
     students = get_all_students()
     results = []
     db = conn or _get_conn()
+    ignored_pairs = get_ignored_decline_pairs()
     for s in students:
         rows = db.execute("""
-            SELECT s.total_score, e.exam_date, e.name as exam_name
+            SELECT s.total_score, s.exam_id, e.exam_date, e.name as exam_name
             FROM scores s
             JOIN exams e ON e.id = s.exam_id
             WHERE s.student_name = ? AND s.is_absent = 0
@@ -297,6 +300,11 @@ def find_consecutive_declines(conn, min_times=2):
         """, (s['student_name'],)).fetchall()
 
         if len(rows) < min_times + 1:
+            continue
+
+        # 若最新考试已被忽略，跳过该学生
+        latest_exam_id = rows[0]['exam_id']
+        if (s['student_name'], latest_exam_id) in ignored_pairs:
             continue
 
         consec = 0
@@ -315,6 +323,7 @@ def find_consecutive_declines(conn, min_times=2):
                 'consec_declines': consec,
                 'latest_score': rows[0]['total_score'],
                 'prev_score': rows[1]['total_score'] if len(rows) > 1 else None,
+                'latest_exam_id': latest_exam_id,
             })
 
     if not conn:

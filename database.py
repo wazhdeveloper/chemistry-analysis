@@ -64,9 +64,49 @@ def init_db():
 
         CREATE INDEX IF NOT EXISTS idx_scores_name ON scores(student_name);
         CREATE INDEX IF NOT EXISTS idx_scores_exam ON scores(exam_id);
+
+        CREATE TABLE IF NOT EXISTS ignored_declines (
+            student_name TEXT NOT NULL,
+            exam_id      INTEGER NOT NULL,
+            ignored_at   TEXT DEFAULT (datetime('now','localtime')),
+            PRIMARY KEY (student_name, exam_id),
+            FOREIGN KEY (exam_id) REFERENCES exams(id) ON DELETE CASCADE
+        );
     """)
     conn.commit()
     conn.close()
+
+
+# ── 忽略退步预警操作 ──
+
+def add_ignored_decline(student_name, exam_id):
+    """忽略某学生某次考试的连续退步预警"""
+    conn = get_conn()
+    conn.execute(
+        "INSERT OR IGNORE INTO ignored_declines (student_name, exam_id) VALUES (?, ?)",
+        (student_name, exam_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def remove_ignored_decline(student_name, exam_id):
+    """取消忽略，恢复退步预警"""
+    conn = get_conn()
+    conn.execute(
+        "DELETE FROM ignored_declines WHERE student_name=? AND exam_id=?",
+        (student_name, exam_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_ignored_decline_pairs():
+    """获取所有被忽略的 (student_name, exam_id) 对"""
+    conn = get_conn()
+    rows = conn.execute("SELECT student_name, exam_id FROM ignored_declines").fetchall()
+    conn.close()
+    return {(r['student_name'], r['exam_id']) for r in rows}
 
 # ── 考试操作 ──
 

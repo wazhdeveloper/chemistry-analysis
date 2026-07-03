@@ -1,5 +1,8 @@
 """化学成绩分析系统 - Streamlit 主程序"""
 import os
+import calendar
+import random
+import hashlib
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -10,6 +13,7 @@ from database import init_db, add_exam, delete_exam, get_exams
 from database import add_scores, get_exam_scores, get_student_scores
 from database import search_students, get_all_students, get_latest_exam_scores
 from database import get_exam_by_id, get_exam_class_scores
+from database import add_ignored_decline, remove_ignored_decline, get_ignored_decline_pairs
 from analyzer import (
     detect_platform, parse_xinjiaoyu, parse_zhixuewang,
     calc_trend_data, calc_progress, calc_class_stats,
@@ -46,10 +50,19 @@ st.set_page_config(page_title="化学成绩分析", page_icon="📊", layout="wi
 # ── 自定义样式 ──
 st.markdown("""
 <style>
-    /* 整体色调 */
-    .stApp { background: #f5f7fb; }
-
+    /* 整体色调与字体 */
+    .stApp {
+        background: linear-gradient(180deg, #f5f7fb 0%, #eef1f7 100%);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+        color: #1f2937;
+    }
     .main > div { padding: 0 0.5rem; }
+
+    /* 滚动条美化 */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 
     /* 删除按钮：红色无框 */
     button[kind="tertiary"],
@@ -64,38 +77,54 @@ st.markdown("""
         min-height: auto !important;
         height: auto !important;
         line-height: inherit !important;
+        transition: opacity 0.2s ease;
     }
+    button[kind="tertiary"]:hover { opacity: 0.65; }
 
-    /* 标题区 */
+    /* 标题区 - 渐变 + 微光 */
     .app-header {
-        background: linear-gradient(135deg, #1a73e8, #0d47a1);
+        background: linear-gradient(135deg, #1a73e8 0%, #0d47a1 100%);
         color: white;
-        padding: 1.2rem 2rem;
-        border-radius: 12px;
+        padding: 1.4rem 2rem;
+        border-radius: 14px;
         margin-bottom: 1.5rem;
         display: flex;
         align-items: center;
         gap: 0.8rem;
-        box-shadow: 0 2px 12px rgba(26,115,232,0.15);
+        box-shadow: 0 8px 24px rgba(26,115,232,0.25), 0 2px 6px rgba(26,115,232,0.12);
+        position: relative;
+        overflow: hidden;
     }
-    .app-header h1 { margin: 0; font-size: 1.6rem; color: white; }
-    .app-header span { font-size: 1.8rem; opacity: 0.9; }
+    .app-header::before {
+        content: '';
+        position: absolute;
+        top: -50%; right: -8%;
+        width: 200px; height: 200px;
+        background: radial-gradient(circle, rgba(255,255,255,0.15) 0%, transparent 70%);
+        pointer-events: none;
+    }
+    .app-header h1 { margin: 0; font-size: 1.6rem; color: white; font-weight: 700; letter-spacing: 0.3px; }
+    .app-header span { font-size: 1.8rem; opacity: 0.95; }
 
-    /* 卡片 */
+    /* 卡片 - 层次感 + hover */
     .card {
         background: white;
-        border-radius: 10px;
-        padding: 1rem 1.2rem;
-        margin-bottom: 0.8rem;
-        box-shadow: 0 1px 6px rgba(0,0,0,0.06);
+        border-radius: 12px;
+        padding: 1.1rem 1.3rem;
+        margin-bottom: 0.9rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.04);
         border: 1px solid #eef0f4;
+        transition: box-shadow 0.25s ease;
+    }
+    .card:hover {
+        box-shadow: 0 4px 16px rgba(0,0,0,0.06), 0 8px 24px rgba(0,0,0,0.05);
     }
     .card-warn {
-        background: #fff8f0;
+        background: linear-gradient(135deg, #fff8f0 0%, #fffaf5 100%);
         border-left: 4px solid #f59e0b;
     }
     .card-good {
-        background: #f0fdf4;
+        background: linear-gradient(135deg, #f0fdf4 0%, #f5fdf7 100%);
         border-left: 4px solid #22c55e;
     }
 
@@ -104,24 +133,35 @@ st.markdown("""
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding: 0.6rem 0;
+        padding: 0.7rem 0;
         border-bottom: 1px solid #f0f0f0;
+        transition: background 0.2s ease;
     }
+    .exam-item:hover { background: #f8faff; }
     .exam-item:last-child { border-bottom: none; }
 
-    /* Metric 数字 */
+    /* Metric 数字 - 渐变背景 */
     .metric-box {
         text-align: center;
-        padding: 0.8rem;
-        background: #f8faff;
-        border-radius: 8px;
+        padding: 1rem 0.8rem;
+        background: linear-gradient(135deg, #f8faff 0%, #f0f5ff 100%);
+        border-radius: 10px;
         border: 1px solid #e8edf5;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
     }
-    .metric-box .num { font-size: 1.8rem; font-weight: 700; }
-    .metric-box .label { font-size: 0.75rem; color: #6b7280; margin-top: 0.2rem; }
+    .metric-box:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.07);
+    }
+    .metric-box .num { font-size: 1.9rem; font-weight: 700; letter-spacing: -0.5px; }
+    .metric-box .label { font-size: 0.75rem; color: #6b7280; margin-top: 0.3rem; font-weight: 500; }
+    .metric-box.green { background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-color: #bbf7d0; }
     .metric-box.green .num { color: #16a34a; }
+    .metric-box.red { background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%); border-color: #fecaca; }
     .metric-box.red .num { color: #dc2626; }
+    .metric-box.orange { background: linear-gradient(135deg, #fff8f0 0%, #ffedd5 100%); border-color: #fed7aa; }
     .metric-box.orange .num { color: #f59e0b; }
+    .metric-box.blue { background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border-color: #bfdbfe; }
     .metric-box.blue .num { color: #2563eb; }
 
     /* 退步学生条目 */
@@ -129,8 +169,11 @@ st.markdown("""
         display: flex;
         align-items: center;
         gap: 0.8rem;
-        padding: 0.4rem 0;
+        padding: 0.5rem 0.6rem;
+        border-radius: 6px;
+        transition: background 0.2s ease;
     }
+    .decline-row:hover { background: #f8faff; }
     .decline-row .name { font-weight: 600; min-width: 5rem; }
     .decline-row .arrow { color: #dc2626; font-weight: 700; min-width: 3rem; }
     .decline-row .rank { color: #6b7280; font-size: 0.85rem; }
@@ -139,30 +182,71 @@ st.markdown("""
     .css-1d391kg, .css-163ttbj { background: #ffffff; }
     .sidebar-info {
         background: #f0f7ff;
-        border-radius: 8px;
-        padding: 0.8rem;
+        border-radius: 10px;
+        padding: 0.9rem;
         margin-top: 0.5rem;
         text-align: center;
     }
+    /* 侧边栏按钮圆角 */
+    section[data-testid="stSidebar"] button {
+        border-radius: 8px !important;
+        transition: all 0.2s ease !important;
+    }
 
     /* 分割线美化 */
-    hr { margin: 1.2rem 0; border-color: #eef0f4; }
+    hr { margin: 1.2rem 0; border-color: #eef0f4; opacity: 0.7; }
 
-    /* 学生详情头部 */
+    /* 学生详情头部 - 多段渐变 + 微光 */
     .student-header {
-        background: linear-gradient(135deg, #1e40af, #3b82f6);
+        background: linear-gradient(135deg, #1e40af 0%, #3b82f6 50%, #60a5fa 100%);
         color: white;
-        padding: 1.5rem 2rem;
-        border-radius: 12px;
+        padding: 1.6rem 2rem;
+        border-radius: 14px;
         margin-bottom: 1.5rem;
-        box-shadow: 0 2px 12px rgba(59,130,246,0.2);
+        box-shadow: 0 8px 24px rgba(59,130,246,0.25), 0 2px 6px rgba(59,130,246,0.12);
+        position: relative;
+        overflow: hidden;
+        text-align: center;
     }
-    .student-header h2 { margin: 0; color: white; font-size: 1.5rem; }
-    .student-header .sub { opacity: 0.8; font-size: 0.9rem; margin-top: 0.3rem; }
-
+    .student-header::before {
+        content: '';
+        position: absolute;
+        top: -30%; right: -5%;
+        width: 220px; height: 220px;
+        background: radial-gradient(circle, rgba(255,255,255,0.18) 0%, transparent 70%);
+        pointer-events: none;
+    }
+    .student-header h2 { margin: 0; color: white; font-size: 1.5rem; font-weight: 700; }
+    .student-header .sub { opacity: 0.9; font-size: 0.9rem; margin-top: 0.3rem; }
 
     /* 数据表格 */
-    .dataframe { font-size: 0.85rem; }
+    .dataframe { font-size: 0.85rem; border-radius: 8px; overflow: hidden; }
+    .dataframe th { background: #f8faff !important; font-weight: 600 !important; }
+
+    /* Streamlit 按钮统一圆角 + hover */
+    .stButton > button {
+        border-radius: 8px !important;
+        font-weight: 500 !important;
+        transition: transform 0.15s ease, box-shadow 0.2s ease !important;
+    }
+    .stButton > button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 10px rgba(0,0,0,0.08);
+    }
+
+    /* expander 头部美化 */
+    .streamlit-expanderHeader {
+        font-weight: 600 !important;
+        background: #f8faff !important;
+        border-radius: 10px !important;
+    }
+
+    /* 输入框圆角 */
+    .stTextInput > div > div > input,
+    .stNumberInput > div > div > input,
+    .stSelectbox > div > div > div {
+        border-radius: 8px !important;
+    }
 
 </style>
 """, unsafe_allow_html=True)
@@ -183,22 +267,31 @@ if 'overview_class' not in st.session_state:
     st.session_state.overview_class = None
 if 'editing_exam' not in st.session_state:
     st.session_state.editing_exam = None
+if 'editing_mtime' not in st.session_state:
+    st.session_state.editing_mtime = None
 
 # ── 侧边栏导航 ──
-st.sidebar.markdown("## 📊 化学成绩分析")
-st.sidebar.markdown("---")
+st.sidebar.markdown(
+    '<div style="background:linear-gradient(135deg,#1a73e8,#0d47a1);'
+    'color:white;padding:0.9rem 1rem;border-radius:10px;'
+    'box-shadow:0 4px 12px rgba(26,115,232,0.2);margin-bottom:0.6rem;">'
+    '<div style="font-size:1.05rem;font-weight:700;">📊 化学成绩分析</div>'
+    '<div style="font-size:0.75rem;opacity:0.85;margin-top:0.2rem;">Chemistry Score Analytics</div>'
+    '</div>',
+    unsafe_allow_html=True
+)
 
-if st.sidebar.button("🏠 首页", use_container_width=True):
+if st.sidebar.button("🏠 首页", width="stretch"):
     st.session_state.page = 'home'
     st.session_state.selected_student = None
     st.session_state.selected_exam_id = None
     st.rerun()
 
-if st.sidebar.button("📥 导入新成绩", use_container_width=True):
+if st.sidebar.button("📥 导入新成绩", width="stretch"):
     st.session_state.page = 'import'
     st.rerun()
 
-if st.sidebar.button("📉 班级分析", use_container_width=True):
+if st.sidebar.button("📉 班级分析", width="stretch"):
     st.session_state.page = 'class_overview'
     st.rerun()
 
@@ -216,7 +309,7 @@ for s in all_students:
 for cls_name in sorted(classes.keys(), key=lambda x: int(x) if x.isdigit() else x):
     with st.sidebar.expander(f"🏫 {cls_name}班（{len(classes[cls_name])} 人）", expanded=False):
         for name in sorted(classes[cls_name]):
-            if st.button(f"👤 {name}", key=f"sb_{name}", use_container_width=True):
+            if st.button(f"👤 {name}", key=f"sb_{name}", width="stretch"):
                 st.session_state.selected_student = name
                 st.session_state.page = 'student'
                 st.rerun()
@@ -225,7 +318,7 @@ for cls_name in sorted(classes.keys(), key=lambda x: int(x) if x.isdigit() else 
 if st.session_state.page == 'student' and st.session_state.selected_student:
     st.sidebar.markdown(f"**当前查看：**")
     st.sidebar.markdown(f"👤 {st.session_state.selected_student}")
-    if st.sidebar.button("← 返回首页", use_container_width=True):
+    if st.sidebar.button("← 返回首页", width="stretch"):
         st.session_state.page = 'home'
         st.session_state.selected_student = None
         st.rerun()
@@ -233,7 +326,74 @@ if st.session_state.page == 'student' and st.session_state.selected_student:
 # ════════════════════════════════════════════════
 # 页面：首页
 # ════════════════════════════════════════════════
+@st.fragment(run_every=2)
+def _auto_reload_edited_exam():
+    """自动轮询被编辑的备份文件，检测到保存后自动重新读取并更新数据库"""
+    eid = st.session_state.get('editing_exam')
+    if not eid:
+        return
+    opened_mtime = st.session_state.get('editing_mtime')
+    if opened_mtime is None:
+        return
+    bp = _get_backup_path(eid)
+    if not bp or not os.path.exists(bp):
+        return
+    try:
+        current_mtime = os.path.getmtime(bp)
+    except OSError:
+        return
+    # 文件未被保存修改，继续等待
+    if current_mtime <= opened_mtime:
+        return
+    # 检测到文件已保存，等待短暂时间避免 Excel 写入未完成
+    import time
+    time.sleep(1)
+    try:
+        # 再次确认 mtime（防止读取中途变化）
+        current_mtime = os.path.getmtime(bp)
+        if current_mtime <= opened_mtime:
+            return
+        df = pd.read_excel(bp) if bp.endswith('.xlsx') else pd.read_excel(bp, engine='xlrd')
+        platform = detect_platform(df)
+        if platform == '新教育':
+            new_scores = parse_xinjiaoyu(df)
+        elif platform == '智学网':
+            new_scores = parse_zhixuewang(df)
+        else:
+            st.error('自动更新失败：无法识别文件格式')
+            st.session_state.editing_exam = None
+            st.session_state.editing_mtime = None
+            st.session_state._force_refresh = True
+            st.rerun()
+            return
+        if new_scores:
+            conn = get_conn()
+            conn.execute("DELETE FROM scores WHERE exam_id=?", (eid,))
+            conn.commit()
+            conn.close()
+            add_scores(eid, new_scores)
+            st.session_state.import_success = '✅ 检测到文件已保存，自动更新成功！'
+            try:
+                st.toast('✅ 已自动重新读取更新成绩！', icon='📥')
+            except Exception:
+                pass
+        st.session_state.editing_exam = None
+        st.session_state.editing_mtime = None
+        st.session_state._force_refresh = True
+        st.rerun()
+    except Exception as ex:
+        st.error(f'自动重新读取失败: {ex}')
+        st.session_state.editing_exam = None
+        st.session_state.editing_mtime = None
+        st.session_state._force_refresh = True
+        st.rerun()
+
+
 def render_home():
+    # 安全网：fragment 检测到文件保存后设置此标志，确保整页刷新
+    if st.session_state.get('_force_refresh'):
+        st.session_state._force_refresh = False
+        st.rerun()
     st.markdown('<div class="app-header"><span>📊</span><h1>化学成绩分析</h1></div>', unsafe_allow_html=True)
 
     # 导入成功提示
@@ -248,6 +408,11 @@ def render_home():
             eid = int(edit_id)
             bp = _get_backup_path(eid)
             if bp:
+                # 记录打开前的修改时间，用于后续检测文件是否被保存
+                try:
+                    st.session_state.editing_mtime = os.path.getmtime(bp)
+                except OSError:
+                    st.session_state.editing_mtime = None
                 os.startfile(bp)
                 st.session_state.editing_exam = eid
         except:
@@ -278,40 +443,124 @@ def render_home():
                             _delete_backup(e['id'])
                             delete_exam(e['id'])
                             st.rerun()
-                # 重新读取更新
+                # 自动重读：检测到文件保存后自动更新
                 if st.session_state.get('editing_exam'):
                     eid = st.session_state.editing_exam
                     bp = _get_backup_path(eid)
                     if bp and os.path.exists(bp):
-                        st.info(f'已打开备份文件，编辑保存后点击下方按钮更新数据')
-                        if st.button("📥 已编辑完成，重新读取更新", key=f"reload_{eid}", type="primary"):
-                            try:
-                                import pandas as pd
-                                df = pd.read_excel(bp) if bp.endswith('.xlsx') else pd.read_excel(bp, engine='xlrd')
-                                platform = detect_platform(df)
-                                if platform == '新教育':
-                                    new_scores = parse_xinjiaoyu(df)
-                                elif platform == '智学网':
-                                    new_scores = parse_zhixuewang(df)
-                                else:
-                                    st.error('无法识别文件格式')
-                                    st.session_state.editing_exam = None
-                                    st.rerun()
-                                if new_scores:
-                                    conn = get_conn()
-                                    conn.execute("DELETE FROM scores WHERE exam_id=?", (eid,))
-                                    conn.commit()
-                                    conn.close()
-                                    add_scores(eid, new_scores)
-                                    st.success('✅ 更新成功！')
-                                st.session_state.editing_exam = None
-                                st.rerun()
-                            except Exception as ex:
-                                st.error(f'重新读取失败: {ex}')
+                        st.info(
+                            '📂 已打开备份 Excel 文件，请在 Excel 中编辑并保存（Ctrl+S），'
+                            '保存后系统将**自动检测并重新读取更新**，无需手动点击。'
+                        )
+                        # 启动自动轮询 fragment
+                        _auto_reload_edited_exam()
+                        # 提供取消按钮（防止用户放弃编辑）
+                        if st.button("✖ 取消编辑监控", key=f"cancel_edit_{eid}", type="tertiary"):
+                            st.session_state.editing_exam = None
+                            st.session_state.editing_mtime = None
+                            st.rerun()
                     else:
                         st.session_state.editing_exam = None
+                        st.session_state.editing_mtime = None
         else:
             st.markdown('<div class="card">📭 还没有考试数据，点击左侧「导入新成绩」开始吧！</div>', unsafe_allow_html=True)
+
+        # ⚠️ 未交卷学生提示（从最新考试起连续 2 次及以上无成绩记录）
+        if exams and len(exams) >= 2:
+            conn = get_conn()
+            # 所有考试按日期降序
+            all_exams_db = conn.execute(
+                "SELECT id, name, exam_date FROM exams ORDER BY exam_date DESC, id DESC"
+            ).fetchall()
+            # 按日期分组（同一天算一轮）
+            date_groups = {}
+            for e in all_exams_db:
+                date_groups.setdefault(e['exam_date'], []).append(e)
+            dates_sorted = sorted(date_groups.keys(), reverse=True)
+
+            # 按班级构建考试轮次（每轮取该班级对应的考试 ID，按日期降序）
+            class_exam_rounds = {}  # class -> [(exam_id, exam_name, exam_date), ...]
+            for d in dates_sorted:
+                for e in date_groups[d]:
+                    cls_row = conn.execute(
+                        "SELECT DISTINCT class_name FROM scores WHERE exam_id=? LIMIT 1", (e['id'],)
+                    ).fetchone()
+                    if cls_row:
+                        cls = cls_row['class_name']
+                        class_exam_rounds.setdefault(cls, []).append(
+                            (e['id'], e['name'], e['exam_date'])
+                        )
+
+            missing_students = []
+            for cls, rounds in class_exam_rounds.items():
+                if len(rounds) < 2:
+                    continue
+                # 该班级所有历史学生
+                stu_rows = conn.execute(
+                    "SELECT DISTINCT student_name FROM scores WHERE class_name=?", (cls,)
+                ).fetchall()
+                for stu in stu_rows:
+                    stu_name = stu['student_name']
+                    # 从最新考试往后数，连续缺失（无任何记录）的次数
+                    miss_count = 0
+                    for eid, _, _ in rounds:
+                        has = conn.execute(
+                            "SELECT 1 FROM scores WHERE exam_id=? AND student_name=? LIMIT 1",
+                            (eid, stu_name)
+                        ).fetchone()
+                        if has:
+                            break
+                        miss_count += 1
+                    if miss_count >= 2:
+                        # 找该生最近一次有记录的考试名（若有的话）
+                        last_seen = conn.execute(
+                            "SELECT e.name, e.exam_date FROM scores s JOIN exams e ON e.id=s.exam_id "
+                            "WHERE s.student_name=? AND s.class_name=? "
+                            "ORDER BY e.exam_date DESC LIMIT 1",
+                            (stu_name, cls)
+                        ).fetchone()
+                        last_seen_label = f'{last_seen["name"]}（{last_seen["exam_date"]}）' if last_seen else '历史无记录'
+                        missing_students.append({
+                            'class': cls,
+                            'name': stu_name,
+                            'count': miss_count,
+                            'latest_exam': rounds[0][1],
+                            'last_seen': last_seen_label,
+                        })
+            conn.close()
+
+            if missing_students:
+                # 按班级分组，每班内按缺失次数降序
+                miss_by_class = {}
+                for m in missing_students:
+                    miss_by_class.setdefault(m['class'], []).append(m)
+                for cls in miss_by_class:
+                    miss_by_class[cls].sort(key=lambda x: x['count'], reverse=True)
+
+                # 精简 tips 卡片：一行一个学生，极小字
+                miss_html = (
+                    '<div class="card card-warn" style="padding:0.6rem 0.8rem;">'
+                    f'<b style="font-size:0.85rem;">⚠️ 未交卷预警</b>'
+                    f'<span style="font-size:0.7rem;color:#6b7280;margin-left:0.4rem;">'
+                    f'{len(missing_students)} 人 · 连续 2 次及以上无成绩</span>'
+                )
+                for cls in sorted(miss_by_class.keys(), key=lambda x: int(x) if x.isdigit() else x):
+                    members = miss_by_class[cls]
+                    # 每班一行：班级 + 学生名（缺失次数）
+                    names_str = '　'.join(
+                        f'❌{m["name"]}({m["count"]}次)' for m in members
+                    )
+                    miss_html += (
+                        f'<div style="font-size:0.72rem;color:#4b5563;margin-top:0.35rem;'
+                        f'line-height:1.5;">'
+                        f'<b style="color:#8b4513;">{cls}班</b>　{names_str}</div>'
+                    )
+                miss_html += (
+                    '<div style="font-size:0.62rem;color:#9ca3af;margin-top:0.3rem;">'
+                    '可能未交卷或未参加，建议核实</div>'
+                    '</div>'
+                )
+                st.markdown(miss_html, unsafe_allow_html=True)
 
         # 📈 各班平均分变化曲线
         if exams:
@@ -348,7 +597,7 @@ def render_home():
                     legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
                 )
                 st.markdown('<div class="card">', unsafe_allow_html=True)
-                st.plotly_chart(fig_class, use_container_width=True)
+                st.plotly_chart(fig_class, width="stretch")
                 st.markdown('</div>', unsafe_allow_html=True)
 
         # ⚠️ 退步预警
@@ -436,7 +685,7 @@ def render_home():
                                 f'</div>',
                                 unsafe_allow_html=True
                             )
-                            if st.button(f"查看 {s['student_name']}", key=f"d_{s['student_name']}_{cls_exam['id']}", use_container_width=True):
+                            if st.button(f"查看 {s['student_name']}", key=f"d_{s['student_name']}_{cls_exam['id']}", width="stretch"):
                                 st.session_state.selected_student = s['student_name']
                                 st.session_state.page = 'student'
                                 st.rerun()
@@ -468,14 +717,22 @@ def render_home():
                         f'</div>',
                         unsafe_allow_html=True
                     )
-                    if st.button(f"查看 {cd['student_name']}", key=f"cd_{cd['student_name']}_{sel_cls2}", use_container_width=True):
-                        st.session_state.selected_student = cd['student_name']
-                        st.session_state.page = 'student'
-                        st.rerun()
+                    bc1, bc2 = st.columns([11, 4])
+                    with bc1:
+                        if st.button(f"查看", key=f"cd_{cd['student_name']}_{sel_cls2}", width="stretch"):
+                            st.session_state.selected_student = cd['student_name']
+                            st.session_state.page = 'student'
+                            st.rerun()
+                    with bc2:
+                        if st.button(f"忽略", key=f"ig_{cd['student_name']}_{sel_cls2}", width="stretch", help="忽略后该生本次考试不再列入连续退步预警名单"):
+                            add_ignored_decline(cd['student_name'], cd['latest_exam_id'])
+                            st.rerun()
                 st.markdown('</div>', unsafe_allow_html=True)
             conn.close()
 
     with col2:
+        today = date.today()
+
         st.markdown('<div class="card"><b>🔍 搜索学生</b>', unsafe_allow_html=True)
         query = st.text_input("输入学生姓名", label_visibility="collapsed",
                               placeholder="输入姓名搜索...")
@@ -485,13 +742,197 @@ def render_home():
                 for r in results:
                     if st.button(f"👤 {r['student_name']} · {r['class_name']}班",
                                  key=f"search_{r['student_name']}",
-                                 use_container_width=True):
+                                 width="stretch"):
                         st.session_state.selected_student = r['student_name']
                         st.session_state.page = 'student'
                         st.rerun()
             else:
                 st.caption("未找到该学生")
         st.markdown('</div>', unsafe_allow_html=True)
+
+        # 📅 日历卡片
+        cal = calendar.Calendar(firstweekday=6)  # 周日为首
+        weeks = cal.monthdayscalendar(today.year, today.month)
+        cn_month = f"{today.month}月"
+        weekdays = ['日', '一', '二', '三', '四', '五', '六']
+        cal_html = (
+            f'<div class="card"><b>📅 {today.year}年 {cn_month}</b>'
+            f'<div style="text-align:center;margin:0.6rem 0 0.3rem;font-size:0.78rem;color:#6b7280;">'
+            f'<span style="color:#1a73e8;font-weight:700;">{today.strftime("%A")}</span>'
+            f' · 第 {today.isocalendar()[1]} 周</div>'
+            f'<table style="width:100%;border-collapse:collapse;font-size:0.78rem;text-align:center;table-layout:fixed;">'
+        )
+        # 表头
+        cal_html += '<tr>'
+        for w in weekdays:
+            cal_html += f'<th style="padding:0.35rem 0;color:#9ca3af;font-weight:600;text-align:center;">{w}</th>'
+        cal_html += '</tr>'
+        # 日期
+        for week in weeks:
+            cal_html += '<tr>'
+            for idx, d in enumerate(week):
+                if d == 0:
+                    cal_html += '<td style="padding:0.3rem 0;"></td>'
+                elif d == today.day:
+                    cal_html += (
+                        f'<td style="padding:0.3rem 0;text-align:center;">'
+                        f'<span style="display:inline-block;width:1.7rem;height:1.7rem;'
+                        f'line-height:1.7rem;border-radius:50%;background:#1a73e8;color:white;'
+                        f'font-weight:700;box-sizing:border-box;">{d}</span></td>'
+                    )
+                elif idx in (0, 6):  # 周日/周六
+                    cal_html += f'<td style="padding:0.3rem 0;color:#f59e0b;text-align:center;">{d}</td>'
+                else:
+                    cal_html += f'<td style="padding:0.3rem 0;color:#374151;text-align:center;">{d}</td>'
+            cal_html += '</tr>'
+        cal_html += '</table></div>'
+        st.markdown(cal_html, unsafe_allow_html=True)
+
+        # 🔮 今日运势（玄学组件 - 依据生辰推算，精简版）
+        # 生辰：2003年农历5月11日辰时
+        birth_seed = "20030511chen"
+        today_seed = today.strftime("%Y%m%d")
+        hash_val = int(hashlib.md5((birth_seed + today_seed).encode()).hexdigest(), 16)
+        luck_index = hash_val % 101  # 0-100
+
+        if luck_index >= 85:
+            luck_label, luck_color, luck_emoji = '大吉', '#dc2626', '🌟'
+        elif luck_index >= 65:
+            luck_label, luck_color, luck_emoji = '吉', '#f59e0b', '✨'
+        elif luck_index >= 45:
+            luck_label, luck_color, luck_emoji = '平', '#6b7280', '☁️'
+        elif luck_index >= 25:
+            luck_label, luck_color, luck_emoji = '小凶', '#3b82f6', '🌧️'
+        else:
+            luck_label, luck_color, luck_emoji = '凶', '#1f2937', '⛈️'
+
+        # 词库（教师视角）
+        yi_pool = ['备课', '批改作业', '课堂讲解', '辅导学生', '个别谈话', '教研会议',
+                   '命题', '实验演示', '家长沟通', '教学反思', '分析学情', '制作课件',
+                   '设计练习', '找学生谈心', '总结教学', '鼓励后进生', '巡视课堂', '讲解错题']
+        ji_pool = ['发火', '拖堂', '熬夜批改', '言语打击', '急躁', '忽略后进生',
+                   '照本宣科', '跳过难点', '批评过度', '闷头讲课', '粗心阅卷',
+                   '凭印象打分', '课堂失控', '布置过量作业', '当众讽刺学生']
+        colors_pool = ['红色', '青色', '黄色', '白色', '黑色', '蓝色', '绿色', '紫色', '橙色', '粉色']
+        directions = ['东方', '南方', '西方', '北方', '东南', '西南', '东北', '西北']
+        numbers = list(range(1, 10))
+        zhi_shen = ['青龙(吉)', '明堂(吉)', '金匮(吉)', '天德(吉)', '玉堂(吉)', '司命(吉)',
+                    '天刑(凶)', '朱雀(凶)', '白虎(凶)', '天牢(凶)', '玄武(凶)', '勾陈(凶)']
+        zodiac = ['鼠', '牛', '虎', '兔', '龙', '蛇', '马', '羊', '猴', '鸡', '狗', '猪']
+        wealth_dir = ['正东', '正南', '正西', '正北', '东南', '西南', '东北', '西北']
+        study_levels = [
+            ('⭐⭐⭐⭐⭐ 状态极佳', '#16a34a'),
+            ('⭐⭐⭐⭐ 状态良好', '#16a34a'),
+            ('⭐⭐⭐ 状态平稳', '#f59e0b'),
+            ('⭐⭐ 略显疲惫', '#f59e0b'),
+            ('⭐ 难以集中', '#dc2626'),
+        ]
+        tips_pool = [
+            '辰时（7-9点）思路最清晰，适合备课或批改作业。',
+            '课前 5 分钟巡视教室，稳定学生情绪即为稳课堂之气。',
+            '讲重难点时放慢语速，多停顿，学生吸收更到位。',
+            '今日宜找一两名后进生单独谈心，事半功倍。',
+            '批改作业忌赶进度，错题统计是下次备课的金矿。',
+            '课堂遇突发状况先深呼吸，忌当堂发火伤身。',
+            '讲解错题时让学生上板演示，比老师讲更高效。',
+            '今日宜与家长沟通，正向反馈比告状更有效。',
+        ]
+
+        def pick(lst, n, offset):
+            selected = []
+            i = 0
+            while len(selected) < n and i < 20:
+                idx = (hash_val >> (offset + i * 3)) % len(lst)
+                if lst[idx] not in selected:
+                    selected.append(lst[idx])
+                i += 1
+            return selected
+
+        yi = pick(yi_pool, 2, 0)
+        ji = pick(ji_pool, 2, 24)
+        lucky_color = colors_pool[(hash_val >> 40) % len(colors_pool)]
+        lucky_number = numbers[(hash_val >> 44) % len(numbers)]
+        lucky_direction = directions[(hash_val >> 48) % len(directions)]
+        today_zhi_shen = zhi_shen[(hash_val >> 52) % len(zhi_shen)]
+        chong_zodiac = zodiac[(hash_val >> 56) % len(zodiac)]
+        wealth_pos = wealth_dir[(hash_val >> 72) % len(wealth_dir)]
+        study_level, study_color = study_levels[(hash_val >> 88) % len(study_levels)]
+        lucky_tip = tips_pool[(hash_val >> 92) % len(tips_pool)]
+
+        luck_html = (
+            '<div class="card" style="background:linear-gradient(135deg,#fdf6e3 0%,#f5e6c8 100%);'
+            'border:1px solid #d4a857;border-left:4px solid #b8860b;padding:0.7rem 0.8rem;">'
+            # 标题行 + 吉凶徽章
+            '<div style="display:flex;justify-content:space-between;align-items:center;">'
+            f'<b style="color:#8b4513;font-size:0.9rem;">🔮 今日运势</b>'
+            f'<span style="font-size:0.85rem;font-weight:700;color:{luck_color};'
+            f'background:rgba(255,255,255,0.6);padding:0.15rem 0.5rem;border-radius:10px;">'
+            f'{luck_emoji} {luck_label} · {luck_index}分</span>'
+            '</div>'
+            # 黄历一行
+            f'<div style="font-size:0.68rem;color:#8b4513;margin-top:0.35rem;opacity:0.85;">'
+            f'🏮 {today_zhi_shen} · 冲{chong_zodiac} · 财神{wealth_pos} · 吉位{lucky_direction}</div>'
+            # 宜忌一行
+            f'<div style="display:flex;gap:0.4rem;margin-top:0.4rem;font-size:0.72rem;">'
+            f'<div style="flex:1;"><span style="color:#16a34a;font-weight:700;">宜</span>'
+            f'<span style="color:#4b5563;"> {" · ".join(yi)}</span></div>'
+            f'<div style="flex:1;"><span style="color:#dc2626;font-weight:700;">忌</span>'
+            f'<span style="color:#4b5563;"> {" · ".join(ji)}</span></div>'
+            '</div>'
+            # 教学运 + 幸运色数 一行
+            f'<div style="display:flex;gap:0.4rem;margin-top:0.4rem;font-size:0.7rem;">'
+            f'<div style="flex:2;color:{study_color};font-weight:600;">📚 教学运 {study_level}</div>'
+            f'<div style="flex:1;color:#8b4513;text-align:right;">🎨{lucky_color} 🔢{lucky_number}</div>'
+            '</div>'
+            # 趋吉提示
+            f'<div style="font-size:0.68rem;color:#6b7280;margin-top:0.4rem;'
+            f'padding-top:0.35rem;border-top:1px dashed #d4a857;line-height:1.45;">💡 {lucky_tip}</div>'
+            # 免责
+            '<div style="font-size:0.6rem;color:#8b4513;opacity:0.55;text-align:center;margin-top:0.3rem;">'
+            '玄学娱乐，仅供消遣</div>'
+            '</div>'
+        )
+        st.markdown(luck_html, unsafe_allow_html=True)
+
+        # 📊 数据概览
+        all_students_list = get_all_students()
+        exams_list = get_exams()
+        n_classes = len(set(s['class_name'] for s in all_students_list))
+        overview_html = (
+            '<div class="card"><b>📊 数据概览</b>'
+            '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.6rem;margin-top:0.7rem;">'
+        )
+        stats = [
+            (len(exams_list), '考试次数', '#2563eb'),
+            (len(all_students_list), '学生总数', '#16a34a'),
+            (n_classes, '班级数量', '#f59e0b'),
+        ]
+        for num, label, color in stats:
+            overview_html += (
+                f'<div style="text-align:center;padding:0.5rem 0.2rem;'
+                f'background:#f8faff;border-radius:8px;">'
+                f'<div style="font-size:1.4rem;font-weight:700;color:{color};">{num}</div>'
+                f'<div style="font-size:0.72rem;color:#6b7280;margin-top:0.15rem;">{label}</div>'
+                f'</div>'
+            )
+        overview_html += '</div></div>'
+        st.markdown(overview_html, unsafe_allow_html=True)
+
+        # 💡 小贴士
+        tips = [
+            '点击学生姓名可查看其历次成绩趋势与分析评语。',
+            '在「班级分析」中可对比某班两次考试的整体进退步。',
+            '导入成绩时会自动备份原始 Excel，可随时编辑后重新读取。',
+            '连续两次以上退步的学生会在首页自动预警，请重点关注。',
+        ]
+        tip = random.choice(tips)
+        st.markdown(
+            f'<div class="card" style="background:linear-gradient(135deg,#f0f7ff,#e8f1ff);">'
+            f'<b>💡 小贴士</b>'
+            f'<div style="margin-top:0.5rem;font-size:0.83rem;color:#4b5563;line-height:1.5;">{tip}</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
 
 
 
@@ -554,7 +995,7 @@ def render_import():
             '班级排名': s['class_rank'] if s.get('class_rank') else '',
             '年级排名': s['grade_rank'] if s.get('grade_rank') else '',
         } for s in scores[:20]])
-        st.dataframe(preview_df, use_container_width=True, hide_index=True)
+        st.dataframe(preview_df, width="stretch", hide_index=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
         # 考试信息
@@ -591,7 +1032,7 @@ def render_import():
                     "\n\n如果确认是同一批学生，直接导入即可。"
                 )
 
-        if st.button("✅ 确认导入", type="primary", use_container_width=True):
+        if st.button("✅ 确认导入", type="primary", width="stretch"):
             if not exam_name:
                 st.error("请输入考试名称")
                 return
@@ -713,7 +1154,7 @@ def render_student():
         hovermode='x unified',
         margin=dict(l=20, r=20, t=20, b=40)
     )
-    st.plotly_chart(fig_total, use_container_width=True)
+    st.plotly_chart(fig_total, width="stretch")
     st.markdown('</div>', unsafe_allow_html=True)
 
     # ── 进退步分析 ──
@@ -805,8 +1246,36 @@ def render_student():
             else:
                 break
 
+        latest_exam_id = current['exam_id']
+        is_ignored = (name, latest_exam_id) in get_ignored_decline_pairs()
+
         if consec_decline >= 2:
-            st.warning(f"连续 {consec_decline} 次成绩下降！")
+            # 连续下降警告 + 忽略/恢复按钮（与警告框等高、垂直居中对齐）
+            cw, cb = st.columns([3, 1], vertical_alignment="center")
+            with cw:
+                if is_ignored:
+                    st.info(f"连续 {consec_decline} 次成绩下降（已忽略，不在连续预警名单内）")
+                else:
+                    st.warning(f"连续 {consec_decline} 次成绩下降！")
+            with cb:
+                if is_ignored:
+                    if st.button("恢复预警", key="restore_decline", width="stretch", help="恢复后该生将重新进入连续退步预警名单"):
+                        remove_ignored_decline(name, latest_exam_id)
+                        st.session_state._force_refresh = True
+                        try:
+                            st.toast('已恢复预警，返回首页可见', icon='✅')
+                        except Exception:
+                            pass
+                        st.rerun()
+                else:
+                    if st.button("忽略", key="ignore_decline", width="stretch", help="忽略后本次考试不再列入连续退步预警名单"):
+                        add_ignored_decline(name, latest_exam_id)
+                        st.session_state._force_refresh = True
+                        try:
+                            st.toast('已忽略，已从首页预警名单移除', icon='🚫')
+                        except Exception:
+                            pass
+                        st.rerun()
         elif consec_decline >= 1:
             st.info(f"最近 1 次成绩下降")
         else:
@@ -869,7 +1338,7 @@ def render_student():
                 hovermode='x unified',
                 margin=dict(l=20, r=20, t=20, b=40)
             )
-            st.plotly_chart(fig_rank, use_container_width=True)
+            st.plotly_chart(fig_rank, width="stretch")
         st.markdown('</div>', unsafe_allow_html=True)
 
     # ── 客观题 vs 主观题趋势（仅新教育平台数据） ──
@@ -929,7 +1398,7 @@ def render_student():
             hovermode='x unified',
             margin=dict(l=20, r=20, t=20, b=40)
         )
-        st.plotly_chart(fig_os, use_container_width=True)
+        st.plotly_chart(fig_os, width="stretch")
         st.markdown('</div>', unsafe_allow_html=True)
 
     # ── 历次成绩明细表 ──
@@ -958,7 +1427,7 @@ def render_student():
                 '年级排名': s['grade_rank'] if s['grade_rank'] else '-',
             })
 
-    st.dataframe(pd.DataFrame(detail_rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(detail_rows), width="stretch", hide_index=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
     # ── 导出成绩报告 ──
@@ -986,7 +1455,7 @@ def render_student():
         data=report_text,
         file_name=f"{name}_成绩报告.txt",
         mime="text/plain",
-        use_container_width=True,
+        width="stretch",
     )
 
 
@@ -1068,7 +1537,7 @@ def render_class_overview():
             st.markdown(f'<div class="card card-warn"><b>⚠️ 退步明显（降 ≥ 10 分）</b> — {len(decliners)} 人', unsafe_allow_html=True)
             for d in decliners:
                 st.markdown(f'<div class="decline-row"><span class="name">🔻 {d["student_name"]}</span><span class="rank">{d["current_score"]}分</span><span class="arrow" style="color:#dc2626">↓{abs(d["score_diff"]):.0f}</span><span class="rank">班级排名 {d["prev_rank"]} → {d["current_rank"]}{" （↓"+str(abs(d["rank_diff"]))+"名）" if d["rank_diff"] and d["rank_diff"] < 0 else ""}</span></div>', unsafe_allow_html=True)
-                if st.button(f"查看 {d['student_name']}", key=f"cd_{d['student_name']}", use_container_width=True):
+                if st.button(f"查看 {d['student_name']}", key=f"cd_{d['student_name']}", width="stretch"):
                     st.session_state.selected_student = d['student_name']; st.session_state.page = 'student'; st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
     with col_r:
@@ -1076,7 +1545,7 @@ def render_class_overview():
             st.markdown(f'<div class="card card-good"><b>🔥 进步明显（升 ≥ 10 分）</b> — {len(improvers)} 人', unsafe_allow_html=True)
             for d in improvers:
                 st.markdown(f'<div class="decline-row"><span class="name" style="color:#16a34a">🔥 {d["student_name"]}</span><span class="rank">{d["current_score"]}分</span><span class="arrow" style="color:#16a34a">↑{d["score_diff"]:.0f}</span><span class="rank">班级排名 {d["prev_rank"]} → {d["current_rank"]}{" （↑"+str(d["rank_diff"])+"名）" if d["rank_diff"] and d["rank_diff"] > 0 else ""}</span></div>', unsafe_allow_html=True)
-                if st.button(f"查看 {d['student_name']}", key=f"up_{d['student_name']}", use_container_width=True):
+                if st.button(f"查看 {d['student_name']}", key=f"up_{d['student_name']}", width="stretch"):
                     st.session_state.selected_student = d['student_name']; st.session_state.page = 'student'; st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1109,16 +1578,16 @@ def render_class_overview():
         for label, lo, hi in ranges:
             counts[label] = sum(1 for sc in valid_scores if lo <= sc < hi)
         if valid_scores:
-            st.plotly_chart(go.Figure(data=[go.Bar(x=list(counts.keys()), y=list(counts.values()), text=list(counts.values()), textposition='outside', marker_color=['#22c55e','#86efac','#fde047','#f97316','#ef4444'])]).update_layout(height=300, margin=dict(l=20,r=20,t=20,b=40), yaxis=dict(tickmode='linear', dtick=1)), use_container_width=True)
+            st.plotly_chart(go.Figure(data=[go.Bar(x=list(counts.keys()), y=list(counts.values()), text=list(counts.values()), textposition='outside', marker_color=['#22c55e','#86efac','#fde047','#f97316','#ef4444'])]).update_layout(height=300, margin=dict(l=20,r=20,t=20,b=40), yaxis=dict(tickmode='linear', dtick=1)), width="stretch")
         st.markdown('</div>', unsafe_allow_html=True)
 
     # 全班明细表
     if rows:
         st.markdown('<div class="card"><b>📋 全班明细表</b>', unsafe_allow_html=True)
         detail_df = pd.DataFrame([{'排名': r.get('current_rank',''),'姓名': r['student_name'],'上次': f"{r['prev_score']:.0f}" if r['prev_score'] is not None else '-','本次': f"{r['current_score']:.0f}",'±分': f"{r['score_diff']:+.0f}" if r['score_diff'] is not None else '-','上次排名': r['prev_rank'] if r['prev_rank'] else '-','±排名': f"{r['rank_diff']:+d}" if r['rank_diff'] is not None else '-'} for r in rows])
-        st.dataframe(detail_df, use_container_width=True, hide_index=True, height=400)
+        st.dataframe(detail_df, width="stretch", hide_index=True, height=400)
         csv_data = detail_df.to_csv(index=False, encoding='utf-8-sig')
-        st.download_button("📤 导出全班数据（CSV）", data=csv_data, file_name=f"{sel_cls}班_{current['name']}_成绩明细.csv", mime="text/csv", use_container_width=True)
+        st.download_button("📤 导出全班数据（CSV）", data=csv_data, file_name=f"{sel_cls}班_{current['name']}_成绩明细.csv", mime="text/csv", width="stretch")
         st.markdown('</div>', unsafe_allow_html=True)
 
 def analyze_student_trend(scores):

@@ -7,3 +7,10 @@ fastReruns = false
 
 [global]
 disableWidgetStateDuplicationWarning = true
+
+[theme]
+primaryColor = "#1a73e8"
+backgroundColor = "#f5f7fb"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#1f2937"
+font = "sans serif"
