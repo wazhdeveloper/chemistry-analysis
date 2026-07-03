@@ -426,7 +426,8 @@ def render_home():
                         else:
                             st.markdown('<div style="height:2.5rem"></div>', unsafe_allow_html=True)
                             top_n = 0
-                    for s in cls_decliners[:top_n]:
+                    if max_n > 0:
+                        for s in cls_decliners[:top_n]:
                             st.markdown(
                                 f'<div class="decline-row">'
                                 f'<span class="name">🔻 {s["student_name"]}</span>'
