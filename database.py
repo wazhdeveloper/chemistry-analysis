@@ -1,7 +1,33 @@
 """数据库操作"""
 import sqlite3
 import os
+import shutil
 from config import DB_PATH
+
+BACKUP_DIR = os.path.join(os.path.dirname(DB_PATH), 'excel_backups')
+
+def get_backup_path(exam_id):
+    """获取备份 Excel 文件路径"""
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    # 查找对应考试的备份文件
+    for f in os.listdir(BACKUP_DIR):
+        if f.startswith(f'{exam_id}.'):
+            return os.path.join(BACKUP_DIR, f)
+    return None
+
+def save_backup(exam_id, file_bytes, ext='.xlsx'):
+    """保存原始 Excel 备份"""
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    path = os.path.join(BACKUP_DIR, f'{exam_id}{ext}')
+    with open(path, 'wb') as f:
+        f.write(file_bytes)
+    return path
+
+def delete_backup(exam_id):
+    """删除备份 Excel"""
+    path = get_backup_path(exam_id)
+    if path and os.path.exists(path):
+        os.remove(path)
 
 def get_conn():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
@@ -62,16 +88,26 @@ def delete_exam(exam_id):
     conn.close()
 
 def get_exams():
+    import logging; logging.warning("[DB_DEBUG] get_exams v3 called - NO ORDER BY in SQL")
     conn = get_conn()
-    rows = conn.execute("""
-        SELECT e.*, COUNT(s.id) as student_count
-        FROM exams e
-        LEFT JOIN scores s ON s.exam_id = e.id AND s.is_absent = 0
-        GROUP BY e.id
-        ORDER BY e.exam_date DESC
-    """).fetchall()
+    rows = conn.execute("SELECT * FROM exams").fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        cnt = conn.execute(
+            "SELECT COUNT(*) as c FROM scores WHERE exam_id=? AND is_absent=0",
+            (d['id'],)
+        ).fetchone()['c']
+        d['student_count'] = cnt
+        cls = conn.execute(
+            "SELECT DISTINCT class_name FROM scores WHERE exam_id=? AND is_absent=0",
+            (d['id'],)
+        ).fetchall()
+        d['class_names'] = ', '.join(c['class_name'] for c in cls)
+        result.append(d)
     conn.close()
-    return rows
+    result.sort(key=lambda x: x['exam_date'], reverse=True)
+    return result
 
 def get_exam_by_id(exam_id):
     conn = get_conn()
