@@ -560,7 +560,11 @@ def render_import():
         # 考试信息
         st.markdown('<div class="card"><b>📋 考试信息</b>', unsafe_allow_html=True)
 
-        col1, col2 = st.columns(2)
+        # 从数据中提取班级
+        cls_in_data = sorted(set(s['class_name'] for s in scores if s['class_name']))
+        default_cls = cls_in_data[0] if cls_in_data else ''
+
+        col1, col2, col3 = st.columns(3)
         with col1:
             exam_type = st.selectbox("考试类型", ["限时练习", "月考", "期中", "期末", "统考", "自定义"])
             if exam_type == "自定义":
@@ -569,6 +573,8 @@ def render_import():
                 exam_name = exam_type
         with col2:
             exam_date = st.date_input("考试日期", value=date.today())
+        with col3:
+            exam_class = st.text_input("班级", value=default_cls)
 
         # 重名检测
         if exam_name:
@@ -590,6 +596,10 @@ def render_import():
                 st.error("请输入考试名称")
                 return
             exam_id = add_exam(exam_name, platform, str(exam_date))
+            # 如果用户修改了班级，统一覆盖
+            if exam_class and exam_class != default_cls:
+                for s in scores:
+                    s['class_name'] = exam_class
             add_scores(exam_id, scores)
             # 备份原始 Excel
             ext = os.path.splitext(uploaded_file.name)[1] or '.xlsx'
