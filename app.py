@@ -51,6 +51,20 @@ st.markdown("""
 
     .main > div { padding: 0 0.5rem; }
 
+    /* 删除按钮：红色无框 */
+    button[kind="tertiary"],
+    button[data-testid="baseButton-tertiary"] {
+        color: #dc2626 !important;
+        background: none !important;
+        border: none !important;
+        box-shadow: none !important;
+        font-size: inherit !important;
+        padding: 0 2px !important;
+        min-width: auto !important;
+        min-height: auto !important;
+        height: auto !important;
+        line-height: inherit !important;
+    }
 
     /* 标题区 */
     .app-header {
@@ -241,22 +255,11 @@ def render_home():
         st.query_params.clear()
         st.rerun()
 
-    delete_id = st.query_params.get("delete")
-    if delete_id:
-        try:
-            did = int(delete_id)
-            _delete_backup(did)
-            delete_exam(did)
-        except:
-            pass
-        st.query_params.clear()
-        st.rerun()
-
     col1, col2 = st.columns([7, 3])
     with col1:
         exams = get_exams()
         if exams:
-            with st.expander(f"📋 考试记录（共 {len(exams)} 次）", expanded=False):
+            with st.expander(f"📋 考试记录（共 {len(exams)} 次）", expanded=True):
                 for e in exams:
                     c1, c2, c3, c4 = st.columns([4, 3, 1, 1])
                     with c1:
@@ -271,7 +274,10 @@ def render_home():
                         else:
                             st.markdown('<span style="color:#999">--</span>', unsafe_allow_html=True)
                     with c4:
-                        st.markdown(f'<a href="?delete={e["id"]}" style="color:#dc2626;text-decoration:none" onclick="return confirm(\'确定删除「{e["name"]}」吗？\')">删除</a>', unsafe_allow_html=True)
+                        if st.button("删除", key=f"del_{e['id']}", type="tertiary"):
+                            _delete_backup(e['id'])
+                            delete_exam(e['id'])
+                            st.rerun()
                 # 重新读取更新
                 if st.session_state.get('editing_exam'):
                     eid = st.session_state.editing_exam
