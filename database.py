@@ -2,6 +2,7 @@
 import sqlite3
 import os
 import shutil
+import streamlit as st
 from config import DB_PATH
 
 BACKUP_DIR = os.path.join(os.path.dirname(DB_PATH), 'excel_backups')
@@ -38,6 +39,7 @@ def get_conn():
 
 def init_db():
     """初始化数据库表结构"""
+    st.cache_data.clear()
     conn = get_conn()
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS exams (
@@ -81,6 +83,7 @@ def init_db():
 
 def add_ignored_decline(student_name, exam_id):
     """忽略某学生某次考试的连续退步预警"""
+    st.cache_data.clear()
     conn = get_conn()
     conn.execute(
         "INSERT OR IGNORE INTO ignored_declines (student_name, exam_id) VALUES (?, ?)",
@@ -92,6 +95,7 @@ def add_ignored_decline(student_name, exam_id):
 
 def remove_ignored_decline(student_name, exam_id):
     """取消忽略，恢复退步预警"""
+    st.cache_data.clear()
     conn = get_conn()
     conn.execute(
         "DELETE FROM ignored_declines WHERE student_name=? AND exam_id=?",
@@ -101,6 +105,7 @@ def remove_ignored_decline(student_name, exam_id):
     conn.close()
 
 
+@st.cache_data(ttl=600)
 def get_ignored_decline_pairs():
     """获取所有被忽略的 (student_name, exam_id) 对"""
     conn = get_conn()
@@ -111,24 +116,25 @@ def get_ignored_decline_pairs():
 # ── 考试操作 ──
 
 def add_exam(name, source, exam_date):
+    st.cache_data.clear()
     conn = get_conn()
     c = conn.cursor()
     c.execute("INSERT INTO exams (name, source, exam_date) VALUES (?, ?, ?)",
               (name, source, exam_date))
     exam_id = c.lastrowid
     conn.commit()
-    conn.close()
     return exam_id
 
 def delete_exam(exam_id):
+    st.cache_data.clear()
     conn = get_conn()
     conn.execute("DELETE FROM scores WHERE exam_id = ?", (exam_id,))
     conn.execute("DELETE FROM exams WHERE id = ?", (exam_id,))
     conn.commit()
-    conn.close()
 
+@st.cache_data(ttl=600)
 def get_exams():
-    import logging; logging.warning("[DB_DEBUG] get_exams v3 called - NO ORDER BY in SQL")
+    _debug = False
     conn = get_conn()
     rows = conn.execute("SELECT * FROM exams").fetchall()
     result = []
@@ -149,6 +155,7 @@ def get_exams():
     result.sort(key=lambda x: x['exam_date'], reverse=True)
     return result
 
+@st.cache_data(ttl=600)
 def get_exam_by_id(exam_id):
     conn = get_conn()
     row = conn.execute("SELECT * FROM exams WHERE id = ?", (exam_id,)).fetchone()
@@ -163,6 +170,7 @@ def add_scores(exam_id, scores_list):
         {student_name, class_name, total_score, objective_score,
          subjective_score, class_rank, grade_rank, is_absent}
     """
+    st.cache_data.clear()
     conn = get_conn()
     conn.executemany("""
         INSERT INTO scores
@@ -183,6 +191,7 @@ def add_scores(exam_id, scores_list):
     conn.commit()
     conn.close()
 
+@st.cache_data(ttl=600)
 def get_exam_scores(exam_id):
     conn = get_conn()
     rows = conn.execute("""
@@ -193,6 +202,7 @@ def get_exam_scores(exam_id):
     conn.close()
     return rows
 
+@st.cache_data(ttl=600)
 def get_student_scores(student_name):
     conn = get_conn()
     rows = conn.execute("""
@@ -205,6 +215,7 @@ def get_student_scores(student_name):
     conn.close()
     return rows
 
+@st.cache_data(ttl=600)
 def search_students(query):
     """搜索学生（去重）"""
     conn = get_conn()
@@ -217,6 +228,7 @@ def search_students(query):
     conn.close()
     return rows
 
+@st.cache_data(ttl=600)
 def get_all_students():
     conn = get_conn()
     rows = conn.execute("""
@@ -227,6 +239,7 @@ def get_all_students():
     conn.close()
     return rows
 
+@st.cache_data(ttl=600)
 def get_duplicate_names(exam_id):
     """检查本次考试中是否有跟历史数据重名的学生"""
     conn = get_conn()
@@ -245,6 +258,7 @@ def get_duplicate_names(exam_id):
     # 注意：同名可能是同一个人，也可能是不同人，需要用户确认
     return list(existing_names & current_names)
 
+@st.cache_data(ttl=600)
 def get_latest_exam_scores(student_name, exclude_exam_id=None):
     """获取某学生最近一次考试的成绩（用于进退步对比）"""
     conn = get_conn()
@@ -269,6 +283,7 @@ def get_latest_exam_scores(student_name, exclude_exam_id=None):
     conn.close()
     return row
 
+@st.cache_data(ttl=600)
 def get_class_students(class_name):
     """获取某班级的所有学生（去重）"""
     conn = get_conn()
@@ -281,6 +296,7 @@ def get_class_students(class_name):
     conn.close()
     return rows
 
+@st.cache_data(ttl=600)
 def get_exam_class_scores(exam_id, class_name):
     """获取某次考试某班级的成绩"""
     conn = get_conn()
