@@ -14,11 +14,12 @@ from database import add_scores, get_exam_scores, get_student_scores
 from database import search_students, get_all_students, get_latest_exam_scores
 from database import get_exam_by_id, get_exam_class_scores
 from database import add_ignored_decline, remove_ignored_decline, get_ignored_decline_pairs
+from database import get_goal, set_goal
 from analyzer import (
     detect_platform, parse_xinjiaoyu, parse_zhixuewang,
     calc_trend_data, calc_progress, calc_class_stats,
     normalize_class_name, get_top_decliners, find_consecutive_declines,
-    get_class_comparison, get_class_avg_trends
+    get_class_comparison, get_class_avg_trends, predict_next_score
 )
 from database import get_conn
 
@@ -248,6 +249,12 @@ st.markdown("""
         border-radius: 8px !important;
     }
 
+    /* 组件 iframe 透明 */
+    iframe[title^="streamlit_components.v1"] {
+        background: transparent !important;
+        border: none !important;
+    }
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -389,6 +396,170 @@ def _auto_reload_edited_exam():
         st.rerun()
 
 
+@st.fragment
+def _render_tip_card():
+    """💡 今日小贴士卡片（fragment 局部刷新，点击卡片任意位置切换提示）"""
+    import time as _time
+    import urllib.request
+    import json as _json
+
+    today = date.today()
+    weekday_cn = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'][today.weekday()]
+    month = today.month
+    if month in (3, 4, 5):
+        season, season_tip = '春', '春季气候多变，提醒学生注意增减衣物，预防感冒影响复习'
+    elif month in (6, 7, 8):
+        season, season_tip = '夏', '夏日炎炎易犯困，建议课堂保持通风，午间适当小憩'
+    elif month in (9, 10, 11):
+        season, season_tip = '秋', '秋高气爽正是学习好时节，可安排户外实验激发兴趣'
+    else:
+        season, season_tip = '冬', '冬日寒冷，注意教室保暖，热身小活动有助进入学习状态'
+
+    # 实时天气（缓存 30 分钟，避免 fragment rerun 时重复请求）
+    weather_label, weather_tip = '⛅ 未知', '天气获取失败，请关注当地实际天气情况'
+    weather_cache = st.session_state.get('weather_cache')
+    if weather_cache and (_time.time() - weather_cache.get('ts', 0) < 1800):
+        weather_label, weather_tip = weather_cache['label'], weather_cache['tip']
+    else:
+        try:
+            req = urllib.request.Request(
+                'https://wttr.in/?format=j1',
+                headers={'User-Agent': 'curl/7.0'}
+            )
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                wdata = _json.loads(resp.read().decode('utf-8'))
+            cur = wdata.get('current_condition', [{}])[0]
+            wcode = cur.get('weatherCode', '113')
+            temp = cur.get('temp_C', '?')
+            desc = cur.get('weatherDesc', [{}])[0].get('value', '') if cur.get('weatherDesc') else ''
+            code = int(wcode)
+            if code == 113:
+                weather_label, weather_tip = f'☀️ 晴 {temp}°C', '天气晴朗，学生精神状态较好，适合安排活跃的课堂互动'
+            elif code == 116:
+                weather_label, weather_tip = f'⛅ 多云 {temp}°C', '多云天气光线柔和，适合多媒体教学和投影展示'
+            elif code in (119, 122):
+                weather_label, weather_tip = f'☁️ 阴 {temp}°C', '阴天学生易疲倦，建议增加课堂提问和互动环节'
+            elif code == 143 or code in (248, 260):
+                weather_label, weather_tip = f'🌫️ 雾 {temp}°C', '雾天空气沉闷，注意开窗通风，提醒学生多喝水'
+            elif code in (176, 263, 266, 281, 284, 293, 296, 299, 302, 305, 308, 311, 314, 317, 350, 353, 356, 359):
+                weather_label, weather_tip = f'🌧️ 雨 {temp}°C', '雨天学生易懒散，建议增加课堂提问频率保持专注'
+            elif code in (179, 182, 185, 227, 230, 320, 323, 326, 329, 332, 335, 338, 362, 365, 368, 371):
+                weather_label, weather_tip = f'❄️ 雪 {temp}°C', '雪天注意保暖和通勤安全，可适当调整作业量'
+            elif code in (200, 386, 389, 392, 395):
+                weather_label, weather_tip = f'⛈️ 雷雨 {temp}°C', '雷雨天气注意安全，室外实验改室内演示'
+            else:
+                weather_label, weather_tip = f'🌤️ {desc} {temp}°C', f'当前{desc}，请根据实际情况调整教学安排'
+            st.session_state.weather_cache = {
+                'label': weather_label, 'tip': weather_tip, 'ts': _time.time()
+            }
+        except Exception:
+            weather_label, weather_tip = '🌤️ 天气未知', '无法获取实时天气，请关注当地实际天气情况'
+
+    weekday_tips = {
+        '周一': '周一学生收心难，建议用简短回顾或小测唤醒学习状态',
+        '周二': '周二状态较佳，适合讲解新知识或安排重点章节',
+        '周三': '周三是学习疲乏期，可穿插实验或互动环节调节',
+        '周四': '周四适合巩固练习，布置作业效果较好',
+        '周五': '周五学生心散，宜安排复习总结，避免新授课',
+        '周六': '周末如需补课，注意控制时长，留出休息时间',
+        '周日': '周日休息日，老师也要好好休整，备课之余别忘了放松',
+    }
+    func_tips = [
+        '点击学生姓名可查看其历次成绩趋势与 AI 智能评语（可编辑）',
+        '在「班级分析」中可查看名次流动桑基图和分层教学分组',
+        '学生分析页可设置目标分，每次考试后自动追踪达成情况',
+        '导入成绩时会自动备份原始 Excel，可随时编辑后重新读取',
+        '连续两次以上退步的学生会在首页自动预警，可单独忽略',
+        '学生分析页底部有成绩趋势预测，用线性回归预估下次分数',
+        '班级分析页有成绩热力图，一眼看出谁在哪几次考试失常',
+        '未交卷预警会列出连续 2 次及以上无成绩的学生名单',
+    ]
+
+    all_tips = [
+        ('🌤️ 今日天气', f'{weather_label}　{weather_tip}'),
+        ('📅 ' + weekday_cn + '提醒', weekday_tips[weekday_cn]),
+        ('🍂 ' + season + '季提示', season_tip),
+        ('🔧 功能小贴士', random.choice(func_tips)),
+    ]
+
+    if 'tip_index' not in st.session_state:
+        st.session_state.tip_index = 0
+    cur_idx = st.session_state.tip_index % len(all_tips)
+    tip_title, tip_content = all_tips[cur_idx]
+    today_str = today.strftime('%Y-%m-%d')
+
+    # ① 卡片（st.html 不用 iframe，直接注入主 DOM）
+    #    用 unsafe_allow_javascript=True 执行 <script>，由 JS 隐藏按钮并绑定点击
+    st.html(f'''
+    <div id="tip-card-{cur_idx}" style="
+        background:linear-gradient(135deg,#f0f7ff,#e8f1ff);
+        border-radius:12px;padding:1.1rem 1.3rem;margin-bottom:0.9rem;
+        box-shadow:0 1px 3px rgba(0,0,0,0.04),0 4px 12px rgba(0,0,0,0.04);
+        border:1px solid #eef0f4;cursor:pointer;
+        transition:box-shadow 0.25s ease,transform 0.15s ease;">
+        <div style="font-size:0.95rem;color:#1f2937;"><b>💡 今日小贴士</b>
+            <span style="color:#9ca3af;font-size:0.72rem;margin-left:0.4rem;">{today_str} {weekday_cn}</span>
+        </div>
+        <div style="margin-top:0.5rem;font-size:0.85rem;color:#4b5563;line-height:1.6;">
+            <b>{tip_title}：</b>{tip_content}
+        </div>
+    </div>
+    <script>
+    (function() {{
+        var cardId = 'tip-card-{cur_idx}';
+        var retries = 0;
+        function setup() {{
+            retries++;
+            if (retries > 30) return; // 最多重试 3 秒
+            var card = document.getElementById(cardId);
+            if (!card) {{ setTimeout(setup, 100); return; }}
+            // 向上遍历 DOM，找到同时包含卡片和按钮的最近公共祖先
+            var p = card.parentElement;
+            while (p && !p.querySelector('button')) {{ p = p.parentElement; }}
+            if (!p) {{ setTimeout(setup, 100); return; }}
+            var btn = p.querySelector('button');
+            // 隐藏按钮容器（不影响布局）
+            var btnBox = p.querySelector('[data-testid="stButton"]');
+            if (btnBox) {{
+                btnBox.style.height = '0';
+                btnBox.style.overflow = 'hidden';
+                btnBox.style.margin = '0';
+                btnBox.style.padding = '0';
+            }}
+            // 隐藏按钮本体
+            if (btn) {{
+                btn.style.height = '1px';
+                btn.style.width = '1px';
+                btn.style.padding = '0';
+                btn.style.margin = '0';
+                btn.style.border = '0';
+                btn.style.opacity = '0';
+                btn.style.position = 'absolute';
+                btn.style.overflow = 'hidden';
+                // 点击卡片 → 触发按钮 → fragment 局部刷新
+                card.addEventListener('click', function() {{ btn.click(); }});
+            }}
+            // hover 联动高光
+            card.addEventListener('mouseenter', function() {{
+                card.style.boxShadow = '0 4px 16px rgba(0,0,0,0.06),0 8px 24px rgba(0,0,0,0.05)';
+                card.style.transform = 'translateY(-1px)';
+            }});
+            card.addEventListener('mouseleave', function() {{
+                card.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04),0 4px 12px rgba(0,0,0,0.04)';
+                card.style.transform = 'translateY(0)';
+            }});
+        }}
+        setup();
+    }})();
+    </script>
+    ''', unsafe_allow_javascript=True)
+
+    # ② 隐藏按钮（JS 会找到它并绑定点击）
+    if st.button("tip", key=f"tip_btn_{cur_idx}"):
+        st.session_state.tip_index = (cur_idx + 1) % len(all_tips)
+        st.rerun()  # fragment 内 rerun，仅刷新本卡片
+
+
 def render_home():
     # 安全网：fragment 检测到文件保存后设置此标志，确保整页刷新
     if st.session_state.get('_force_refresh'):
@@ -420,29 +591,110 @@ def render_home():
         st.query_params.clear()
         st.rerun()
 
+    # 处理删除请求（通过 query param 触发，使删除按钮能嵌入 HTML 行内）
+    if st.query_params.get("del_exam"):
+        eid = int(st.query_params["del_exam"])
+        _delete_backup(eid)
+        delete_exam(eid)
+        st.query_params.clear()
+        st.rerun()
+    if st.query_params.get("del_group"):
+        date_str = st.query_params["del_group"]
+        for e in get_exams():
+            if e['exam_date'] == date_str:
+                _delete_backup(e['id'])
+                delete_exam(e['id'])
+        st.query_params.clear()
+        st.rerun()
+
     col1, col2 = st.columns([7, 3])
     with col1:
         exams = get_exams()
         if exams:
-            with st.expander(f"📋 考试记录（共 {len(exams)} 次）", expanded=True):
-                for e in exams:
-                    c1, c2, c3, c4 = st.columns([4, 3, 1, 1])
-                    with c1:
+            # 按日期分组（同一天的考试合并显示为一次）
+            date_groups = {}
+            for e in exams:
+                date_groups.setdefault(e['exam_date'], []).append(e)
+            merged_groups = list(date_groups.values())
+            n_groups = len(merged_groups)
+            n_total = len(exams)
+            title_suffix = f"（共 {n_groups} 次" + (f" / {n_total} 场" if n_total != n_groups else "") + ")"
+            with st.expander(f"📋 考试记录{title_suffix}", expanded=True):
+                # 统一行样式：flex 布局，垂直居中，固定列宽
+                st.markdown(
+                    '<style>'
+                    '.exam-row{display:flex;align-items:center;gap:0.6rem;padding:0.55rem 0;'
+                    'border-bottom:1px solid #f0f0f0;}'
+                    '.exam-row:hover{background:#f8faff;}'
+                    '.exam-row:last-child{border-bottom:none;}'
+                    '.exam-row .col-name{flex:0 0 36%;}'
+                    '.exam-row .col-date{flex:0 0 26%;}'
+                    '.exam-row .col-edit{flex:0 0 24%;text-align:left;}'
+                    '.exam-row .col-del{flex:0 0 14%;text-align:center;}'
+                    '.exam-row .name-txt{font-size:0.88rem;}'
+                    '.exam-row .meta-txt{font-size:0.8rem;color:#6b7280;}'
+                    '.exam-row .edit-link{color:#2563eb;text-decoration:none;cursor:pointer;'
+                    'font-size:0.78rem;white-space:nowrap;}'
+                    '.exam-row .del-link{color:#dc2626;text-decoration:none;cursor:pointer;'
+                    'font-size:0.78rem;white-space:nowrap;}'
+                    '.exam-row .del-link:hover{opacity:0.7;}'
+                    '</style>',
+                    unsafe_allow_html=True
+                )
+                for group in merged_groups:
+                    date_str = group[0]['exam_date']
+                    if len(group) == 1:
+                        # 单场考试
+                        e = group[0]
                         cls_names = e.get('class_names', '') or ''
-                        st.markdown(f'<b>{e["name"]}</b>　<span style="color:#6b7280;font-size:0.85rem">🏫 {cls_names}</span>', unsafe_allow_html=True)
-                    with c2:
-                        st.markdown(f'📅 {e["exam_date"]}　👥 {e["student_count"]} 人', unsafe_allow_html=True)
-                    with c3:
                         bp = _get_backup_path(e['id'])
-                        if bp:
-                            st.markdown(f'<a href="?edit={e["id"]}" style="color:#2563eb;text-decoration:none;cursor:pointer">编辑</a>', unsafe_allow_html=True)
-                        else:
-                            st.markdown('<span style="color:#999">--</span>', unsafe_allow_html=True)
-                    with c4:
-                        if st.button("删除", key=f"del_{e['id']}", type="tertiary"):
-                            _delete_backup(e['id'])
-                            delete_exam(e['id'])
-                            st.rerun()
+                        edit_html = f'<a class="edit-link" href="?edit={e["id"]}">编辑</a>' if bp else '<span style="color:#999;font-size:0.78rem;">--</span>'
+                        del_html = f'<a class="del-link" href="?del_exam={e["id"]}" onclick="return confirm(\'确定删除该考试？\')">删除</a>'
+                        st.markdown(
+                            f'<div class="exam-row">'
+                            f'<div class="col-name"><span class="name-txt"><b>{e["name"]}</b></span>'
+                            f'　<span class="meta-txt">🏫 {cls_names}</span></div>'
+                            f'<div class="col-date"><span class="meta-txt">📅 {e["exam_date"]}　👥 {e["student_count"]}人</span></div>'
+                            f'<div class="col-edit">{edit_html}</div>'
+                            f'<div class="col-del">{del_html}</div>'
+                            f'</div>',
+                            unsafe_allow_html=True
+                        )
+                    else:
+                        # 多场考试合并
+                        names = [e['name'] for e in group]
+                        unique_names = list(dict.fromkeys(names))
+                        name_display = unique_names[0] if len(unique_names) == 1 else ' + '.join(unique_names)
+                        # 班级合并去重
+                        all_cls = []
+                        seen_cls = set()
+                        for e in group:
+                            for c in (e.get('class_names', '') or '').split(', '):
+                                if c and c not in seen_cls:
+                                    seen_cls.add(c)
+                                    all_cls.append(c)
+                        cls_display = ', '.join(all_cls)
+                        total_count = sum(e.get('student_count', 0) for e in group)
+                        # 编辑链接
+                        links = []
+                        for e in group:
+                            bp = _get_backup_path(e['id'])
+                            if bp:
+                                cls_short = (e.get('class_names', '') or '').split(',')[0][:3]
+                                links.append(f'<a class="edit-link" href="?edit={e["id"]}" style="margin-right:0.3rem;">编辑{cls_short}</a>')
+                        edit_html = ''.join(links) if links else '<span style="color:#999;font-size:0.78rem;">--</span>'
+                        del_html = f'<a class="del-link" href="?del_group={date_str}" onclick="return confirm(\'确定删除 {date_str} 的全部 {len(group)} 场考试？\')">删除</a>'
+                        st.markdown(
+                            f'<div class="exam-row">'
+                            f'<div class="col-name"><span class="name-txt"><b>{name_display}</b></span>'
+                            f'<span style="color:#9ca3af;font-size:0.7rem;margin-left:0.3rem;">（{len(group)}场）</span>'
+                            f'　<span class="meta-txt">🏫 {cls_display}</span></div>'
+                            f'<div class="col-date"><span class="meta-txt">📅 {date_str}　👥 {total_count}人</span></div>'
+                            f'<div class="col-edit">{edit_html}</div>'
+                            f'<div class="col-del">{del_html}</div>'
+                            f'</div>',
+                            unsafe_allow_html=True
+                        )
                 # 自动重读：检测到文件保存后自动更新
                 if st.session_state.get('editing_exam'):
                     eid = st.session_state.editing_exam
@@ -918,21 +1170,9 @@ def render_home():
         overview_html += '</div></div>'
         st.markdown(overview_html, unsafe_allow_html=True)
 
-        # 💡 小贴士
-        tips = [
-            '点击学生姓名可查看其历次成绩趋势与分析评语。',
-            '在「班级分析」中可对比某班两次考试的整体进退步。',
-            '导入成绩时会自动备份原始 Excel，可随时编辑后重新读取。',
-            '连续两次以上退步的学生会在首页自动预警，请重点关注。',
-        ]
-        tip = random.choice(tips)
-        st.markdown(
-            f'<div class="card" style="background:linear-gradient(135deg,#f0f7ff,#e8f1ff);">'
-            f'<b>💡 小贴士</b>'
-            f'<div style="margin-top:0.5rem;font-size:0.83rem;color:#4b5563;line-height:1.5;">{tip}</div>'
-            f'</div>',
-            unsafe_allow_html=True
-        )
+        # 💡 今日小贴士（fragment 局部刷新，点击卡片任意位置切换）
+        _render_tip_card()
+
 
 
 
@@ -1061,6 +1301,16 @@ def render_student():
         st.rerun()
         return
 
+    # 进入学生页时滚动到顶部
+    st.html(
+        "<script>"
+        "setTimeout(function(){"
+        "const w=window.parent||window;"
+        "w.scrollTo({top:0,left:0,behavior:'instant'});"
+        "},50);"
+        "</script>"
+    )
+
     scores = get_student_scores(name)
     if not scores:
         st.error(f"未找到学生「{name}」的成绩数据")
@@ -1070,15 +1320,57 @@ def render_student():
             st.rerun()
         return
 
-    # 学生基本信息
+    # 学生基本信息 + 画像徽章
     class_name = scores[0]['class_name']
+    _analysis_head = analyze_student_trend(scores)
+    _tag_head = _analysis_head.get('tag', '📊')
     st.markdown(
         f'<div class="student-header">'
-        f'<h2>👤 {name}</h2>'
-        f'<div class="sub">{class_name}班</div>'
+        f'<h2>👤 {name}　'
+        f'<span style="background:rgba(255,255,255,0.25);padding:0.2rem 0.8rem;'
+        f'border-radius:14px;font-size:0.9rem;font-weight:500;">{_tag_head}</span></h2>'
+        f'<div class="sub">{class_name}班 · 共 {len(scores)} 次考试记录</div>'
         f'</div>',
         unsafe_allow_html=True
     )
+
+    # 🎖️ 成就徽章
+    _achievements = calc_achievements(scores)
+    if _achievements:
+        _badge_colors = [
+            ('linear-gradient(135deg,#fef3c7,#fde68a)', '#92400e'),  # 金
+            ('linear-gradient(135deg,#dbeafe,#bfdbfe)', '#1e3a8a'),  # 蓝
+            ('linear-gradient(135deg,#dcfce7,#bbf7d0)', '#166534'),  # 绿
+            ('linear-gradient(135deg,#fce7f3,#fbcfe8)', '#9d174d'),  # 粉
+            ('linear-gradient(135deg,#fed7aa,#fdba74)', '#9a3412'),  # 橙
+        ]
+        _badges_html = ''
+        for i, (icon, title, desc) in enumerate(_achievements):
+            bg, fg = _badge_colors[i % len(_badge_colors)]
+            _badges_html += (
+                f'<div style="display:inline-block;background:{bg};color:{fg};'
+                f'padding:0.5rem 0.85rem;border-radius:18px;margin:4px;font-size:0.8rem;'
+                f'box-shadow:0 2px 6px rgba(0,0,0,0.1);vertical-align:middle;">'
+                f'<span style="font-size:1.1rem;">{icon}</span> '
+                f'<b>{title}</b> '
+                f'<span style="font-size:0.7rem;opacity:0.85;">{desc}</span>'
+                f'</div>'
+            )
+        st.markdown(
+            f'<div class="card"><b>🎖️ 成就徽章</b>'
+            f'<span style="color:#6b7280;font-size:0.78rem;margin-left:0.5rem;">'
+            f'已点亮 {len(_achievements)} 枚</span>'
+            f'<div style="margin-top:0.5rem;">{_badges_html}</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+    else:
+        st.markdown(
+            f'<div class="card"><b>🎖️ 成就徽章</b>'
+            f'<span style="color:#9ca3af;font-size:0.78rem;margin-left:0.5rem;">'
+            f'暂未点亮（多考几次即可解锁）</span></div>',
+            unsafe_allow_html=True
+        )
 
     # 返回按钮
     if st.button("← 返回首页"):
@@ -1155,6 +1447,79 @@ def render_student():
         margin=dict(l=20, r=20, t=20, b=40)
     )
     st.plotly_chart(fig_total, width="stretch")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # ── 成绩趋势预测 ──
+    pred = predict_next_score(scores)
+    if pred:
+        st.markdown('<div class="card"><b>🔮 下次成绩预测</b>'
+                    f'<span style="color:#6b7280;font-size:0.78rem;margin-left:0.5rem;">'
+                    f'基于 {pred["n"]} 次成绩线性回归 · 趋势：{pred["trend"]}（斜率 {pred["slope"]:+.2f}）</span>',
+                    unsafe_allow_html=True)
+        pc1, pc2, pc3 = st.columns(3)
+        with pc1:
+            pcolor = 'green' if pred['predicted'] >= 80 else 'orange' if pred['predicted'] >= 60 else 'red'
+            st.markdown(f'<div class="metric-box {pcolor}"><div class="num">{pred["predicted"]:.1f}</div>'
+                        f'<div class="label">预测分数</div></div>', unsafe_allow_html=True)
+        with pc2:
+            st.markdown(f'<div class="metric-box blue"><div class="num">{pred["lower"]:.1f} ~ {pred["upper"]:.1f}</div>'
+                        f'<div class="label">预测区间（±1σ）</div></div>', unsafe_allow_html=True)
+        with pc3:
+            warn_line = max(0, round(60 - 0.5 * pred['std'], 1))
+            st.markdown(f'<div class="metric-box red"><div class="num">{warn_line:.1f}</div>'
+                        f'<div class="label">警戒线（及格风险）</div></div>', unsafe_allow_html=True)
+        if pred['trend'] == '下降':
+            st.error(f"⚠️ 预测趋势下降（斜率 {pred['slope']:+.2f}），需重点关注！")
+        else:
+            st.success(f"✅ 趋势平稳/上升，预测下次 {pred['predicted']:.1f} 分。")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # ── 目标达成追踪 ──
+    st.markdown('<div class="card"><b>🎯 目标达成追踪</b>', unsafe_allow_html=True)
+    cur_goal = get_goal(name)
+    gcol1, gcol2 = st.columns([1, 2])
+    with gcol1:
+        new_goal = st.number_input(
+            "设置目标分", min_value=0.0, max_value=100.0,
+            value=float(cur_goal) if cur_goal else 80.0,
+            step=1.0, key=f"goal_input_{name}"
+        )
+        if st.button("💾 保存目标", key=f"save_goal_{name}", width="stretch"):
+            set_goal(name, float(new_goal))
+            try:
+                st.toast('目标已保存', icon='✅')
+            except Exception:
+                pass
+            st.rerun()
+    with gcol2:
+        if cur_goal:
+            latest_score = next((s['total_score'] for s in reversed(scores) if not s['is_absent'] and s['total_score'] is not None), None)
+            if latest_score is not None:
+                diff = round(latest_score - cur_goal, 1)
+                if diff >= 0:
+                    st.markdown(f'<div class="metric-box green"><div class="num">✅ 达成</div>'
+                                f'<div class="label">本次 {latest_score:.1f} · 超目标 {diff:+.1f} 分</div></div>',
+                                unsafe_allow_html=True)
+                elif diff >= -5:
+                    st.markdown(f'<div class="metric-box orange"><div class="num">⚠️ 接近</div>'
+                                f'<div class="label">本次 {latest_score:.1f} · 还差 {abs(diff):.1f} 分</div></div>',
+                                unsafe_allow_html=True)
+                else:
+                    st.markdown(f'<div class="metric-box red"><div class="num">❌ 未达成</div>'
+                                f'<div class="label">本次 {latest_score:.1f} · 差 {abs(diff):.1f} 分</div></div>',
+                                unsafe_allow_html=True)
+                # 历次达成情况
+                achieved = sum(1 for s in scores if not s['is_absent'] and s['total_score'] is not None and s['total_score'] >= cur_goal)
+                total_valid = sum(1 for s in scores if not s['is_absent'] and s['total_score'] is not None)
+                if total_valid:
+                    rate = round(achieved / total_valid * 100)
+                    st.markdown(f'<div style="font-size:0.8rem;color:#6b7280;margin-top:0.4rem;">'
+                                f'📋 历史达成率：{achieved}/{total_valid} 次（{rate}%）</div>',
+                                unsafe_allow_html=True)
+            else:
+                st.info("暂无有效成绩")
+        else:
+            st.info("👈 左侧设置目标分后，每次考试自动追踪达成情况")
     st.markdown('</div>', unsafe_allow_html=True)
 
     # ── 进退步分析 ──
@@ -1285,13 +1650,38 @@ def render_student():
         st.info("暂无有效成绩数据")
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # ── 智能分析评语 ──
+    # ── 智能分析评语（可编辑）──
     analysis = analyze_student_trend(scores)
     if analysis.get('comment'):
-        comments = analysis['comment'].split('\n')
-        st.markdown(f'<div class="card"><b>{analysis["tag"]} 综合分析</b>', unsafe_allow_html=True)
-        for line in comments:
-            st.markdown(line)
+        cache_key = f"comment_edit_{name}"
+        # 初始化/检测 tag 变化时刷新缓存
+        if cache_key not in st.session_state or st.session_state.get(f"comment_tag_{name}") != analysis['tag']:
+            st.session_state[cache_key] = analysis['comment']
+            st.session_state[f"comment_tag_{name}"] = analysis['tag']
+        st.markdown(f'<div class="card"><b>{analysis["tag"]} 综合分析（AI 生成 · 可编辑）</b>',
+                    unsafe_allow_html=True)
+        edited = st.text_area(
+            "评语（可直接修改）",
+            value=st.session_state[cache_key],
+            height=220,
+            key=f"comment_area_{name}",
+            label_visibility="collapsed"
+        )
+        st.session_state[cache_key] = edited
+        ecol1, ecol2 = st.columns([1, 3])
+        with ecol1:
+            if st.button("🔄 恢复 AI 评语", key=f"reset_comment_{name}", width="stretch"):
+                st.session_state[cache_key] = analysis['comment']
+                st.rerun()
+        with ecol2:
+            st.download_button(
+                "📥 导出评语（TXT）",
+                data=edited,
+                file_name=f"{name}_AI评语.txt",
+                mime="text/plain",
+                width="stretch",
+                key=f"dl_comment_{name}"
+            )
         st.markdown('</div>', unsafe_allow_html=True)
 
     # ── 年级排名趋势 ──
@@ -1530,23 +1920,51 @@ def render_class_overview():
     st.markdown(f'参考人数：{data["student_count"]} 人　{prev_label}')
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # ⚠️ 退步明显 + 🔥 进步明显 并排
+    # ⚠️ 退步明显 + 🔥 进步明显 并排（点击整行跳转学生页）
+    st.markdown(
+        '<style>'
+        'a.decline-row-link{display:flex;align-items:center;gap:0.8rem;'
+        'padding:0.5rem 0.6rem;border-radius:6px;text-decoration:none;color:inherit;'
+        'transition:background 0.2s ease;cursor:pointer;}'
+        'a.decline-row-link:hover{background:#f0f7ff;}'
+        'a.decline-row-link .name{font-weight:600;min-width:5rem;}'
+        'a.decline-row-link .arrow{font-weight:700;min-width:3rem;}'
+        'a.decline-row-link .rank{color:#6b7280;font-size:0.85rem;}'
+        '</style>',
+        unsafe_allow_html=True
+    )
     col_l, col_r = st.columns(2)
     with col_l:
         if decliners:
             st.markdown(f'<div class="card card-warn"><b>⚠️ 退步明显（降 ≥ 10 分）</b> — {len(decliners)} 人', unsafe_allow_html=True)
             for d in decliners:
-                st.markdown(f'<div class="decline-row"><span class="name">🔻 {d["student_name"]}</span><span class="rank">{d["current_score"]}分</span><span class="arrow" style="color:#dc2626">↓{abs(d["score_diff"]):.0f}</span><span class="rank">班级排名 {d["prev_rank"]} → {d["current_rank"]}{" （↓"+str(abs(d["rank_diff"]))+"名）" if d["rank_diff"] and d["rank_diff"] < 0 else ""}</span></div>', unsafe_allow_html=True)
-                if st.button(f"查看 {d['student_name']}", key=f"cd_{d['student_name']}", width="stretch"):
-                    st.session_state.selected_student = d['student_name']; st.session_state.page = 'student'; st.rerun()
+                nm = d['student_name']
+                rank_extra = f' （↓{abs(d["rank_diff"])}名）' if d["rank_diff"] and d["rank_diff"] < 0 else ''
+                st.markdown(
+                    f'<a class="decline-row-link" href="?student={nm}" target="_self">'
+                    f'<span class="name">🔻 {nm}</span>'
+                    f'<span class="rank">{d["current_score"]}分</span>'
+                    f'<span class="arrow" style="color:#dc2626">↓{abs(d["score_diff"]):.0f}</span>'
+                    f'<span class="rank">班级排名 {d["prev_rank"]} → {d["current_rank"]}{rank_extra}</span>'
+                    f'</a>',
+                    unsafe_allow_html=True
+                )
             st.markdown('</div>', unsafe_allow_html=True)
     with col_r:
         if improvers:
             st.markdown(f'<div class="card card-good"><b>🔥 进步明显（升 ≥ 10 分）</b> — {len(improvers)} 人', unsafe_allow_html=True)
             for d in improvers:
-                st.markdown(f'<div class="decline-row"><span class="name" style="color:#16a34a">🔥 {d["student_name"]}</span><span class="rank">{d["current_score"]}分</span><span class="arrow" style="color:#16a34a">↑{d["score_diff"]:.0f}</span><span class="rank">班级排名 {d["prev_rank"]} → {d["current_rank"]}{" （↑"+str(d["rank_diff"])+"名）" if d["rank_diff"] and d["rank_diff"] > 0 else ""}</span></div>', unsafe_allow_html=True)
-                if st.button(f"查看 {d['student_name']}", key=f"up_{d['student_name']}", width="stretch"):
-                    st.session_state.selected_student = d['student_name']; st.session_state.page = 'student'; st.rerun()
+                nm = d['student_name']
+                rank_extra = f' （↑{d["rank_diff"]}名）' if d["rank_diff"] and d["rank_diff"] > 0 else ''
+                st.markdown(
+                    f'<a class="decline-row-link" href="?student={nm}" target="_self">'
+                    f'<span class="name" style="color:#16a34a">🔥 {nm}</span>'
+                    f'<span class="rank">{d["current_score"]}分</span>'
+                    f'<span class="arrow" style="color:#16a34a">↑{d["score_diff"]:.0f}</span>'
+                    f'<span class="rank">班级排名 {d["prev_rank"]} → {d["current_rank"]}{rank_extra}</span>'
+                    f'</a>',
+                    unsafe_allow_html=True
+                )
             st.markdown('</div>', unsafe_allow_html=True)
 
     # 🔄 连续退步
@@ -1581,6 +1999,142 @@ def render_class_overview():
             st.plotly_chart(go.Figure(data=[go.Bar(x=list(counts.keys()), y=list(counts.values()), text=list(counts.values()), textposition='outside', marker_color=['#22c55e','#86efac','#fde047','#f97316','#ef4444'])]).update_layout(height=300, margin=dict(l=20,r=20,t=20,b=40), yaxis=dict(tickmode='linear', dtick=1)), width="stretch")
         st.markdown('</div>', unsafe_allow_html=True)
 
+    # 🔥 成绩热力图（学生×考试）
+    if rows:
+        conn = get_conn()
+        all_exams_h = conn.execute(
+            "SELECT id, name, exam_date FROM exams ORDER BY exam_date ASC"
+        ).fetchall()
+        stu_list = [r['student_name'] for r in rows]
+        matrix = []
+        exam_labels_h = []
+        for ex in all_exams_h:
+            sc = conn.execute(
+                "SELECT student_name, total_score, is_absent FROM scores "
+                "WHERE exam_id=? AND class_name=?",
+                (ex['id'], sel_cls)
+            ).fetchall()
+            if not sc:
+                continue
+            exam_labels_h.append(f"{ex['name']}（{ex['exam_date'][5:] if len(ex['exam_date'])>=10 else ex['exam_date']}）")
+            smap = {s['student_name']: s for s in sc}
+            col = []
+            for sn in stu_list:
+                if sn in smap:
+                    s = smap[sn]
+                    col.append(None if s['is_absent'] else s['total_score'])
+                else:
+                    col.append(None)
+            matrix.append(col)
+        conn.close()
+        if len(exam_labels_h) >= 2:
+            matrix_t = list(map(list, zip(*matrix)))
+            fig_h = go.Figure(data=go.Heatmap(
+                z=matrix_t,
+                x=exam_labels_h,
+                y=stu_list,
+                colorscale=[[0,'#ef4444'],[0.5,'#f59e0b'],[0.75,'#22c55e'],[1,'#15803d']],
+                zmin=0, zmax=100,
+                hovertemplate='%{y}<br>%{x}<br>分数: %{z}<extra></extra>',
+                colorbar=dict(title='分数', tickvals=[0,60,80,90,100]),
+            ))
+            fig_h.update_layout(
+                title=dict(text=f"🔥 {sel_cls}班 成绩热力图（红=低分 · 绿=高分 · 空白=缺考）", font=dict(size=14)),
+                xaxis_title="考试", yaxis_title="学生",
+                height=max(380, len(stu_list) * 24),
+                margin=dict(l=20, r=20, t=55, b=40),
+                yaxis=dict(autorange='reversed'),
+            )
+            st.markdown('<div class="card">', unsafe_allow_html=True)
+            st.plotly_chart(fig_h, width="stretch")
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    # 🌊 进退步桑基图（名次区间流动：上次 → 本次）
+    if prev:
+        def _rank_bin(r):
+            if r is None: return '未知'
+            if r <= 5: return '前5名'
+            if r <= 15: return '6-15名'
+            if r <= 30: return '16-30名'
+            return '30名外'
+        sankey_data = {}  # (prev_bin, cur_bin) -> count
+        for r in rows:
+            pb = _rank_bin(r.get('prev_rank'))
+            cb = _rank_bin(r.get('current_rank'))
+            sankey_data[(pb, cb)] = sankey_data.get((pb, cb), 0) + 1
+        if sankey_data:
+            bins_order = ['前5名', '6-15名', '16-30名', '30名外', '未知']
+            labels = list(dict.fromkeys(
+                [f'{b}（上次）' for pb, _ in sankey_data for b in [pb]]
+                + [f'{b}（本次）' for _, cb in sankey_data for b in [cb]]
+            ))
+            # 用 prev/cur 标签
+            src_labels = list(dict.fromkeys([pb for pb, _ in sankey_data.keys()]))
+            tgt_labels = list(dict.fromkeys([cb for _, cb in sankey_data.keys()]))
+            all_labels = [f'{l}（上次）' for l in src_labels] + [f'{l}（本次）' for l in tgt_labels]
+            label_idx = {l: i for i, l in enumerate(all_labels)}
+            sources = []
+            targets = []
+            values = []
+            colors = []
+            color_map = {'前5名': '#22c55e', '6-15名': '#3b82f6', '16-30名': '#f59e0b', '30名外': '#ef4444', '未知': '#9ca3af'}
+            for (pb, cb), cnt in sankey_data.items():
+                sources.append(label_idx[f'{pb}（上次）'])
+                targets.append(label_idx[f'{cb}（本次）'])
+                values.append(cnt)
+                colors.append(color_map.get(pb, '#9ca3af'))
+            fig_sk = go.Figure(data=[go.Sankey(
+                node=dict(label=all_labels, pad=18, thickness=20,
+                          color=[color_map.get(l.replace('（上次）','').replace('（本次）',''), '#9ca3af') for l in all_labels]),
+                link=dict(source=sources, target=targets, value=values, color=colors, hovertemplate='%{source.label} → %{target.label}<br>%{value} 人<extra></extra>'),
+            )])
+            fig_sk.update_layout(
+                title=dict(text=f"🌊 {sel_cls}班 名次区间流动（上次 → 本次）", font=dict(size=14)),
+                height=420, margin=dict(l=20, r=20, t=55, b=20),
+            )
+            st.markdown('<div class="card">', unsafe_allow_html=True)
+            st.plotly_chart(fig_sk, width="stretch")
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    # 📚 分层教学分组（按本次分数自动分培优/巩固/补差）
+    if rows:
+        valid_rows = [r for r in rows if r.get('current_score') is not None]
+        if valid_rows:
+            # 按分数分层
+            tier_a = [r for r in valid_rows if r['current_score'] >= 85]   # 培优
+            tier_b = [r for r in valid_rows if 70 <= r['current_score'] < 85]  # 巩固
+            tier_c = [r for r in valid_rows if r['current_score'] < 70]   # 补差
+            # 各组按分数降序
+            tier_a.sort(key=lambda x: x['current_score'], reverse=True)
+            tier_b.sort(key=lambda x: x['current_score'], reverse=True)
+            tier_c.sort(key=lambda x: x['current_score'], reverse=True)
+            tc1, tc2, tc3 = st.columns(3)
+            tiers = [
+                (tc1, '🌟 培优组', '≥85分', tier_a, 'linear-gradient(135deg,#f0fdf4,#dcfce7)', '#16a34a', '重点拔高，可拓展竞赛题'),
+                (tc2, '💪 巩固组', '70-84分', tier_b, 'linear-gradient(135deg,#eff6ff,#dbeafe)', '#2563eb', '查漏补缺，稳定提升'),
+                (tc3, '🔧 补差组', '<70分', tier_c, 'linear-gradient(135deg,#fef2f2,#fee2e2)', '#dc2626', '夯实基础，强化训练'),
+            ]
+            for col, title, rng, members, bg, fg, tip in tiers:
+                with col:
+                    st.markdown(
+                        f'<div class="card" style="background:{bg};border-left:4px solid {fg};">'
+                        f'<b style="color:{fg};">{title}</b>'
+                        f'<span style="color:#6b7280;font-size:0.78rem;margin-left:0.4rem;">{rng} · {len(members)} 人</span>'
+                        f'<div style="font-size:0.72rem;color:{fg};margin-top:0.2rem;">💡 {tip}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+                    for r in members:
+                        nm = r['student_name']
+                        sc = r['current_score']
+                        st.markdown(
+                            f'<a class="decline-row-link" href="?student={nm}" target="_self">'
+                            f'<span class="name" style="color:{fg};">👤 {nm}</span>'
+                            f'<span class="rank">{sc:.0f}分</span>'
+                            f'</a>',
+                            unsafe_allow_html=True
+                        )
+
     # 全班明细表
     if rows:
         st.markdown('<div class="card"><b>📋 全班明细表</b>', unsafe_allow_html=True)
@@ -1589,6 +2143,70 @@ def render_class_overview():
         csv_data = detail_df.to_csv(index=False, encoding='utf-8-sig')
         st.download_button("📤 导出全班数据（CSV）", data=csv_data, file_name=f"{sel_cls}班_{current['name']}_成绩明细.csv", mime="text/csv", width="stretch")
         st.markdown('</div>', unsafe_allow_html=True)
+
+def calc_achievements(scores):
+    """计算学生成就徽章（基于历次成绩）"""
+    valid = [s for s in scores if not s['is_absent'] and s['total_score'] is not None]
+    if not valid:
+        return []
+    scores_list = [s['total_score'] for s in valid]
+    n = len(valid)
+    badges = []
+
+    # 🏆 满分达人：最高分 >= 95
+    if max(scores_list) >= 95:
+        badges.append(('🏆', '满分达人', f'最高 {max(scores_list):.0f} 分'))
+
+    # 🛡️ 全勤奖：全部参加
+    if len(valid) == len(scores) and len(scores) >= 2:
+        badges.append(('🛡️', '全勤奖', f'{len(scores)} 次全勤'))
+
+    # 🔥 连续进步：连续 2+ 次进步
+    max_consec_up = 0
+    consec_up = 0
+    for i in range(1, n):
+        if scores_list[i] > scores_list[i-1]:
+            consec_up += 1
+            max_consec_up = max(max_consec_up, consec_up)
+        else:
+            consec_up = 0
+    if max_consec_up >= 2:
+        badges.append(('🔥', f'{max_consec_up}连进', f'连续 {max_consec_up} 次进步'))
+
+    # 🚀 逆袭之星：从不及格到优秀
+    if n >= 3 and min(scores_list[:max(1, n//2)]) < 60 and max(scores_list[-2:]) >= 80:
+        badges.append(('🚀', '逆袭之星', '从不及格到优秀'))
+
+    # 💎 稳定之星：标准差 < 3
+    if n >= 3:
+        avg = sum(scores_list) / n
+        std = (sum((s - avg) ** 2 for s in scores_list) / n) ** 0.5
+        if std < 3:
+            badges.append(('💎', '稳定之星', f'标准差 {std:.1f}'))
+
+    # ⭐ 常胜将军：班级排名 3+ 次进前 5
+    top5 = sum(1 for s in valid if s['class_rank'] and s['class_rank'] <= 5)
+    if top5 >= 3:
+        badges.append(('⭐', '常胜将军', f'{top5} 次进前 5'))
+
+    # 🎯 客观题之王
+    obj_scores = [s['objective_score'] for s in valid if s['objective_score'] is not None]
+    if obj_scores and sum(obj_scores) / len(obj_scores) >= 45:
+        badges.append(('🎯', '客观题之王', f'选择题均 {sum(obj_scores)/len(obj_scores):.1f}'))
+
+    # ✍️ 主观题之王
+    subj_scores = [s['subjective_score'] for s in valid if s['subjective_score'] is not None]
+    if subj_scores and sum(subj_scores) / len(subj_scores) >= 45:
+        badges.append(('✍️', '主观题之王', f'填空题均 {sum(subj_scores)/len(subj_scores):.1f}'))
+
+    # 📈 飞跃进步：单次进步 >= 15 分
+    if n >= 2:
+        max_diff = max(scores_list[i] - scores_list[i-1] for i in range(1, n))
+        if max_diff >= 15:
+            badges.append(('📈', '飞跃进步', f'单次进步 {max_diff:.0f} 分'))
+
+    return badges
+
 
 def analyze_student_trend(scores):
     """综合分析学生历次成绩趋势，生成评语"""
@@ -1747,6 +2365,14 @@ def analyze_student_trend(scores):
 # ════════════════════════════════════════════════
 # 路由
 # ════════════════════════════════════════════════
+# 处理点击姓名链接跳转：?student=姓名
+_go_student = st.query_params.get("student")
+if _go_student:
+    st.session_state.selected_student = _go_student
+    st.session_state.page = 'student'
+    st.query_params.clear()
+    st.rerun()
+
 if st.session_state.page == 'home':
     render_home()
 elif st.session_state.page == 'import':

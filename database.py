@@ -74,6 +74,12 @@ def init_db():
             PRIMARY KEY (student_name, exam_id),
             FOREIGN KEY (exam_id) REFERENCES exams(id) ON DELETE CASCADE
         );
+
+        CREATE TABLE IF NOT EXISTS student_goals (
+            student_name TEXT PRIMARY KEY,
+            target_score REAL NOT NULL,
+            updated_at   TEXT DEFAULT (datetime('now','localtime'))
+        );
     """)
     conn.commit()
     conn.close()
@@ -112,6 +118,32 @@ def get_ignored_decline_pairs():
     rows = conn.execute("SELECT student_name, exam_id FROM ignored_declines").fetchall()
     conn.close()
     return {(r['student_name'], r['exam_id']) for r in rows}
+
+
+# ── 学生目标分操作 ──
+
+def get_goal(student_name):
+    """获取学生目标分，未设置返回 None"""
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT target_score FROM student_goals WHERE student_name=?", (student_name,)
+    ).fetchone()
+    conn.close()
+    return row['target_score'] if row else None
+
+
+def set_goal(student_name, target_score):
+    """设置/更新学生目标分"""
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO student_goals (student_name, target_score) VALUES (?, ?) "
+        "ON CONFLICT(student_name) DO UPDATE SET target_score=excluded.target_score, "
+        "updated_at=datetime('now','localtime')",
+        (student_name, target_score)
+    )
+    conn.commit()
+    conn.close()
+
 
 # ── 考试操作 ──
 

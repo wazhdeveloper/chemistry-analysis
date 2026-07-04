@@ -333,6 +333,45 @@ def find_consecutive_declines(conn, min_times=2):
     return results
 
 
+def predict_next_score(student_scores):
+    """用线性回归预测下次考试分数区间
+    student_scores: list of sqlite3.Row/dict（按考试日期升序）
+    返回: {predicted, lower, upper, slope, std, trend} 或 None（数据不足）
+    """
+    valid = [s for s in student_scores
+             if not s['is_absent'] and s['total_score'] is not None]
+    if len(valid) < 2:
+        return None
+    n = len(valid)
+    xs = list(range(n))
+    ys = [s['total_score'] for s in valid]
+    mean_x = sum(xs) / n
+    mean_y = sum(ys) / n
+    num = sum((xs[i] - mean_x) * (ys[i] - mean_y) for i in range(n))
+    den = sum((x - mean_x) ** 2 for x in xs)
+    slope = num / den if den != 0 else 0
+    intercept = mean_y - slope * mean_x
+    predicted = slope * n + intercept
+    # 残差标准差（n-2 自由度）
+    if n > 2:
+        residuals = [ys[i] - (slope * xs[i] + intercept) for i in range(n)]
+        std = (sum(r ** 2 for r in residuals) / (n - 2)) ** 0.5
+    else:
+        std = 0
+    lower = max(0, predicted - std)
+    upper = min(100, predicted + std)
+    trend = '上升' if slope > 0.5 else ('下降' if slope < -0.5 else '平稳')
+    return {
+        'predicted': round(predicted, 1),
+        'lower': round(lower, 1),
+        'upper': round(upper, 1),
+        'slope': round(slope, 2),
+        'std': round(std, 1),
+        'trend': trend,
+        'n': n,
+    }
+
+
 def get_top_decliners(exam_id, conn, top_n=5, class_name=None):
     """获取某次考试各班退步最大的前 top_n 名学生（按名次下降）
     如果指定 class_name，只返回该班级的退步学生
